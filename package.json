@@ -1,0 +1,25 @@
+{
+  "name": "s3-managed-download",
+  "version": "1.0.0",
+  "description": "Get large objects from S3 by using parallel byte-range fetches to improve performance.",
+  "main": "index.js",
+  "scripts": {
+    "test": "eslint . && nyc mocha"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/widdix/s3-managed-download.git"
+  },
+  "author": "Michael Wittig <michael@widdix.de>",
+  "license": "MIT",
+  "bugs": {
+    "url": "https://github.com/widdix/s3-managed-download/issues"
+  },
+  "homepage": "https://github.com/widdix/s3-managed-download#readme",
+  "devDependencies": {
+    "eslint": "8.36.0",
+    "mocha": "10.2.0",
+    "mock-fs": "5.2.0",
+    "nyc": "15.1.0"
+  }
+}
