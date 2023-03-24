@@ -10,14 +10,15 @@ npm i s3-managed-download
 Use:
 ```js
 const AWS = require('aws-sdk');
+const {createWriteStream} = require('node:fs');
 const {pipeline} = require('node:stream');
 const {download} = require('s3-managed-download');
 
 const s3 = new AWS.S3({apiVersion: '2006-03-01'});
 
 pipeline(
-  download(s3, {bucket: 'bucket', key: 'key', version: 'version'}, {partSizeInMegabytes: 8, concurrency: 4}).readStream(),
-  fs.createWriteStream('/tmp/test'),
+  download(s3, {bucket: 'bucket', key: 'key', version: 'optional version'}, {partSizeInMegabytes: 8, concurrency: 4}).readStream(),
+  createWriteStream('/tmp/test'),
   (err) => {
     if (err) {
       console.error('something went wrong', err);
@@ -27,3 +28,41 @@ pipeline(
   }
 );
 ```
+
+Get insights into the part downloads:
+```js
+const AWS = require('aws-sdk');
+const {createWriteStream} = require('node:fs');
+const {pipeline} = require('node:stream');
+const {download} = require('s3-managed-download');
+
+const s3 = new AWS.S3({apiVersion: '2006-03-01'});
+
+const d = download(s3, {bucket: 'bucket', key: 'key', version: 'optional version'}, {partSizeInMegabytes: 8, concurrency: 4});
+d.on('part:downloading', ({partNo}) => {
+  console.log('start downloading part', partNo);
+});
+d.on('part:downloaded', ({partNo}) => {
+  console.log('part downloaded, write to disk next in correct order', partNo);
+});
+d.on('part:done', ({partNo}) => {
+  console.log('part written to disk', partNo);
+});
+pipeline(
+  d.readStream(),
+  createWriteStream('/tmp/test'),
+  (err) => {
+    if (err) {
+      console.error('something went wrong', err);
+    } else {
+      console.log('done');
+    }
+  }
+);
+```
+
+## Considerations
+
+* Typical sizes `partSizeInMegabytes` are 8 MB or 16 MB. If objects are uploaded using a multipart upload, it’s a good practice to download them in the same part sizes (or at least aligned to part boundaries) for best performance (see https://docs.aws.amazon.com/whitepapers/latest/s3-optimizing-performance-best-practices/use-byte-range-fetches.html).
+* The default S3 client sets `maxSockets` to 50. Therefore, a `concurrency` > 50 requires changes to the S3 client configuration (see https://docs.aws.amazon.com/sdk-for-javascript/v2/developer-guide/node-configuring-maxsockets.html).
+
