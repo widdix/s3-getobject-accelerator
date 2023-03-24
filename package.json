@@ -1,5 +1,5 @@
 {
-  "name": "s3-managed-download",
+  "name": "s3-getobject-accelerator",
   "version": "1.0.0",
   "description": "Get large objects from S3 by using parallel byte-range fetches to improve performance.",
   "main": "index.js",
@@ -8,14 +8,14 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/widdix/s3-managed-download.git"
+    "url": "git+https://github.com/widdix/s3-getobject-accelerator.git"
   },
   "author": "Michael Wittig <michael@widdix.de>",
   "license": "MIT",
   "bugs": {
-    "url": "https://github.com/widdix/s3-managed-download/issues"
+    "url": "https://github.com/widdix/s3-getobject-accelerator/issues"
   },
-  "homepage": "https://github.com/widdix/s3-managed-download#readme",
+  "homepage": "https://github.com/widdix/s3-getobject-accelerator#readme",
   "devDependencies": {
     "eslint": "8.36.0",
     "mocha": "10.2.0",

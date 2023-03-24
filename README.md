@@ -1,10 +1,10 @@
-# S3 Managed Download
+# S3 GetObject Accelerator
 
 Get large objects from S3 by using parallel byte-range fetches to improve performance.
 
 Install:
 ```bash
-npm i s3-managed-download
+npm i s3-getobject-accelerator
 ```
 
 Use:
@@ -12,7 +12,7 @@ Use:
 const AWS = require('aws-sdk');
 const {createWriteStream} = require('node:fs');
 const {pipeline} = require('node:stream');
-const {download} = require('s3-managed-download');
+const {download} = require('s3-getobject-accelerator');
 
 const s3 = new AWS.S3({apiVersion: '2006-03-01'});
 
@@ -34,7 +34,7 @@ Get insights into the part downloads:
 const AWS = require('aws-sdk');
 const {createWriteStream} = require('node:fs');
 const {pipeline} = require('node:stream');
-const {download} = require('s3-managed-download');
+const {download} = require('s3-getobject-accelerator');
 
 const s3 = new AWS.S3({apiVersion: '2006-03-01'});
 
