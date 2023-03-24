@@ -18,7 +18,7 @@ function parseContentRange(contentRange) {
 
 exports.download = (s3, {bucket, key, version}, {partSizeInMegabytes, concurrency}) => {
   const emitter = new EventEmitter();
-  const partSizeInBytes = partSizeInMegabytes*1000000;
+  const partSizeInBytes = (partSizeInMegabytes > 0) ? partSizeInMegabytes*1000000 : null;
   const stream = new PassThrough();
 
   let started = false;
@@ -72,14 +72,19 @@ exports.download = (s3, {bucket, key, version}, {partSizeInMegabytes, concurrenc
   }
 
   function downloadPart(partNo, cb) {
-    const startByte = (partNo-1)*partSizeInBytes; // inclusive
-    const endByte = Math.min(startByte+partSizeInBytes-1, bytesToDownload-1); // inclusive
-    const req = s3.getObject({
+    const params = {
       Bucket: bucket,
       Key: key,
-      Range: `bytes=${startByte}-${endByte}`,
       VersionId: version
-    });
+    };
+    if (partSizeInBytes === null) {
+      params.PartNumber = partNo;
+    } else {
+      const startByte = (partNo-1)*partSizeInBytes; // inclusive
+      const endByte = Math.min(startByte+partSizeInBytes-1, bytesToDownload-1); // inclusive
+      params.Range = `bytes=${startByte}-${endByte}`;
+    }
+    const req = s3.getObject(params);
     partsDownloading[partNo] = req;
     req.send((err, data) => {
       delete partsDownloading[partNo];
@@ -127,34 +132,56 @@ exports.download = (s3, {bucket, key, version}, {partSizeInMegabytes, concurrenc
 
   function start() {
     emitter.emit('part:downloading', {partNo: 1});
-    const endByte = partSizeInBytes-1; // inclusive
-    s3.getObject({
+    const params = {
       Bucket: bucket,
       Key: key,
-      Range: `bytes=0-${endByte}`,
       VersionId: version
-    }, (err, data) => {
+    };
+    if (partSizeInBytes === null) {
+      params.PartNumber = 1;
+    } else {
+      const endByte = partSizeInBytes-1; // inclusive
+      params.Range = `bytes=0-${endByte}`;
+    }
+    s3.getObject(params, (err, data) => {
       if (err) {
         stream.destroy(err);
       } else {
-        const contentRange = parseContentRange(data.ContentRange);
-        if (contentRange === undefined) {
-          stream.destroy(new Error('unexpected content range'));
-        } else {
+        if (partSizeInBytes === null) {
           emitter.emit('part:downloaded', {partNo: 1});
-          bytesToDownload = contentRange.length;
-          if (bytesToDownload <= partSizeInBytes) {
-            stream.end(data.Body, () => {
-              emitter.emit('part:done', {partNo: 1});
-            });
-          } else {
+          if ('PartsCount' in data && data.PartsCount > 1) {
             write(data.Body, () => {
               emitter.emit('part:done', {partNo: 1});
               lastWrittenPartNo = 1;
               nextPartNo = 2;
-              partsToDownload = Math.ceil(bytesToDownload/partSizeInBytes);
+              partsToDownload = data.PartsCount;
               startDownloadingParts();
             });
+          } else {
+            stream.end(data.Body, () => {
+              emitter.emit('part:done', {partNo: 1});
+            });
+          }
+        } else {
+          const contentRange = parseContentRange(data.ContentRange);
+          if (contentRange === undefined) {
+            stream.destroy(new Error('unexpected content range'));
+          } else {
+            emitter.emit('part:downloaded', {partNo: 1});
+            bytesToDownload = contentRange.length;
+            if (bytesToDownload <= partSizeInBytes) {
+              stream.end(data.Body, () => {
+                emitter.emit('part:done', {partNo: 1});
+              });
+            } else {
+              write(data.Body, () => {
+                emitter.emit('part:done', {partNo: 1});
+                lastWrittenPartNo = 1;
+                nextPartNo = 2;
+                partsToDownload = Math.ceil(bytesToDownload/partSizeInBytes);
+                startDownloadingParts();
+              });
+            }
           }
         }
       }

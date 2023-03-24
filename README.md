@@ -61,8 +61,37 @@ pipeline(
 );
 ```
 
+API:
+
+```js
+download(
+  s3,                        // AWS.S3
+  {
+    bucket: 'bucket',        // string
+    key: 'key',              // string
+    version: 'version'       // optional string
+  },
+  {
+    partSizeInMegabytes: 8, // optional number: if not specified, parts are downloaded as they were uploaded
+    concurrency: 4          // number
+  }
+)
+```
+
+Returns:
+```
+{
+  readStream(),               // ReadStream
+  partsDownloading(),         // number
+  addListener(eventName, listener),
+  off(eventName, listener),
+  on(eventName, listener),
+  once(eventName, listener),
+  removeListener(eventName, listener)
+}
+```
+
 ## Considerations
 
 * Typical sizes `partSizeInMegabytes` are 8 MB or 16 MB. If objects are uploaded using a multipart upload, it’s a good practice to download them in the same part sizes (or at least aligned to part boundaries) for best performance (see https://docs.aws.amazon.com/whitepapers/latest/s3-optimizing-performance-best-practices/use-byte-range-fetches.html).
 * The default S3 client sets `maxSockets` to 50. Therefore, a `concurrency` > 50 requires changes to the S3 client configuration (see https://docs.aws.amazon.com/sdk-for-javascript/v2/developer-guide/node-configuring-maxsockets.html).
-
