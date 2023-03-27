@@ -16,7 +16,7 @@ function parseContentRange(contentRange) {
   }
 }
 
-exports.download = (s3, {bucket, key, version}, {partSizeInMegabytes, concurrency}) => {
+exports.download = (s3, {bucket, key, version}, {partSizeInMegabytes, concurrency, waitForWriteBeforeDownloladingNextPart}) => {
   const emitter = new EventEmitter();
   const partSizeInBytes = (partSizeInMegabytes > 0) ? partSizeInMegabytes*1000000 : null;
   const stream = new PassThrough();
@@ -96,29 +96,24 @@ exports.download = (s3, {bucket, key, version}, {partSizeInMegabytes, concurrenc
     });
   }
 
-  function downloadAndWritePart(partNo, cb) {
-    emitter.emit('part:downloading', {partNo});
-    downloadPart(partNo, (err, data) => {
-      if (err) {
-        cb(err);
-      } else {
-        emitter.emit('part:downloaded', {partNo});
-        writePart(partNo, data.Body, () => {
-          emitter.emit('part:done', {partNo});
-          cb();
-        });
-      }
-    });
-  }
-
   function downloadNextPart() {
     if (nextPartNo <= partsToDownload) {
       const partNo = nextPartNo++;
-      downloadAndWritePart(partNo, (err) => {
+      emitter.emit('part:downloading', {partNo});
+      downloadPart(partNo, (err, data) => {
         if (err) {
           abortDownloads(err);
         } else {
-          process.nextTick(downloadNextPart);
+          emitter.emit('part:downloaded', {partNo});
+          if (waitForWriteBeforeDownloladingNextPart !== true) {
+            process.nextTick(downloadNextPart);
+          }
+          writePart(partNo, data.Body, () => {
+            emitter.emit('part:done', {partNo});
+            if (waitForWriteBeforeDownloladingNextPart === true) {
+              process.nextTick(downloadNextPart);
+            }
+          });
         }
       });
     }

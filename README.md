@@ -75,8 +75,9 @@ download(
     version: 'version'                 // optional string
   },
   {
-    partSizeInMegabytes: 8,            // optional number > 0: if not specified, parts are downloaded as they were uploaded
-    concurrency: 4                     // number > 0
+    partSizeInMegabytes: 8,                       // optional number > 0: if not specified, parts are downloaded as they were uploaded
+    concurrency: 4,                               // number > 0
+    waitForWriteBeforeDownloladingNextPart: false // optional boolean
   }
 ) : {
   readStream(),                         // ReadStream (see https://nodejs.org/api/stream.html#class-streamreadable)

@@ -118,7 +118,7 @@ describe('handler', () => {
           '/tmp': {
           }
         });
-        const d = download(s3, {bucket:'bucket', key: 'key', version: 'version'}, {concurrency: 4});
+        const d = download(s3, {bucket:'bucket', key: 'key', version: 'version'}, {concurrency: 4, waitForWriteBeforeDownloladingNextPart: true});
         let active = 0;
         let activeMax = 0;
         const downloadingPartNos = [];
@@ -206,7 +206,7 @@ describe('handler', () => {
           '/tmp': {
           }
         });
-        const d = download(s3, {bucket:'bucket', key: 'key', version: 'version'}, {concurrency: 4});
+        const d = download(s3, {bucket:'bucket', key: 'key', version: 'version'}, {concurrency: 4, waitForWriteBeforeDownloladingNextPart: true});
         let active = 0;
         let activeMax = 0;
         const downloadingPartNos = [];
@@ -302,7 +302,7 @@ describe('handler', () => {
           '/tmp': {
           }
         });
-        const d = download(s3, {bucket:'bucket', key: 'key', version: 'version'}, {concurrency: 4});
+        const d = download(s3, {bucket:'bucket', key: 'key', version: 'version'}, {concurrency: 4, waitForWriteBeforeDownloladingNextPart: true});
         let active = 0;
         let activeMax = 0;
         const downloadingPartNos = [];
@@ -583,7 +583,7 @@ describe('handler', () => {
           '/tmp': {
           }
         });
-        const d = download(s3, {bucket:'bucket', key: 'key', version: 'version'}, {partSizeInMegabytes: 8, concurrency: 4});
+        const d = download(s3, {bucket:'bucket', key: 'key', version: 'version'}, {partSizeInMegabytes: 8, concurrency: 4, waitForWriteBeforeDownloladingNextPart: true});
         let active = 0;
         let activeMax = 0;
         const downloadingPartNos = [];
@@ -671,7 +671,7 @@ describe('handler', () => {
           '/tmp': {
           }
         });
-        const d = download(s3, {bucket:'bucket', key: 'key', version: 'version'}, {partSizeInMegabytes: 8, concurrency: 4});
+        const d = download(s3, {bucket:'bucket', key: 'key', version: 'version'}, {partSizeInMegabytes: 8, concurrency: 4, waitForWriteBeforeDownloladingNextPart: true});
         let active = 0;
         let activeMax = 0;
         const downloadingPartNos = [];
@@ -767,7 +767,7 @@ describe('handler', () => {
           '/tmp': {
           }
         });
-        const d = download(s3, {bucket:'bucket', key: 'key', version: 'version'}, {partSizeInMegabytes: 8, concurrency: 4});
+        const d = download(s3, {bucket:'bucket', key: 'key', version: 'version'}, {partSizeInMegabytes: 8, concurrency: 4, waitForWriteBeforeDownloladingNextPart: true});
         let active = 0;
         let activeMax = 0;
         const downloadingPartNos = [];
