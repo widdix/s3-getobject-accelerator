@@ -1,6 +1,6 @@
 # S3 GetObject Accelerator
 
-Get large objects from S3 by using parallel byte-range fetches to improve performance.
+Get large objects from S3 by using parallel byte-range fetches/parts to improve performance.
 
 Install:
 
