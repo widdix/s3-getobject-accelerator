@@ -1,5 +1,10 @@
 const { PassThrough } = require('node:stream');
 const { EventEmitter } = require('node:events');
+const querystring = require('node:querystring');
+const https = require('node:https');
+const aws4 = require('aws4');
+
+// FIXME download never seems to finish?
 
 function parseContentRange(contentRange) {
   // bytes 0-7999999/1073741824
@@ -14,6 +19,80 @@ function parseContentRange(contentRange) {
   } else {
     return undefined;
   }
+}
+
+function getAwsDetails(cb) {
+  // FIXME fetch values from metadata servive and cache values
+  const credentials = {
+    accessKeyId: process.env.AWS_ACCESS_KEY_ID,
+    secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY
+  };
+  if ('AWS_SESSION_TOKEN' in process.env) {
+    credentials.sessionToken = process.env.AWS_SESSION_TOKEN;
+  }
+  cb(null, {
+    region: process.env.AWS_REGION,
+    credentials
+  });
+}
+
+function getObject({Bucket, Key, VersionId, PartNumber, Range}, cb) {
+  const qs = {};
+  const headers = {};
+  if (VersionId !== undefined && VersionId !== null) {
+    qs.versionId = VersionId;
+  }
+  if (PartNumber !== undefined && PartNumber !== null) {
+    qs.partNumber = PartNumber;
+  }
+  if (Range !== undefined && Range !== null) {
+    headers.Range = Range;
+  }
+  getAwsDetails((err, {region, credentials}) => {
+    if (err) {
+      cb(err);
+    } else {
+      const options = aws4.sign({
+        hostname: `${Bucket}.s3.${region}.amazonaws.com`,
+        method: 'GET',
+        path: `/${Key}?${querystring.stringify(qs)}`,
+        headers,
+        service: 's3',
+        region
+      }, credentials);
+      const req = https.request(options, (res) => {
+        const size = parseInt(res.headers['content-length'], 10);
+        const body = Buffer.allocUnsafe(size);
+        let bodyOffset = 0;
+        res.on('data', chunk => {
+          chunk.copy(body, bodyOffset);
+          bodyOffset =+ chunk.length;
+        });
+        res.on('end', () => {
+          if (res.statusCode === 206) { // FIXME is this alos the code for very small files witrhout more than one part?
+            const data = {
+              Body: body,
+              ContentLength: res.headers['content-length']
+            };
+            if ('x-amz-mp-parts-count' in res.headers) {
+              data.PartsCount = res.headers['x-amz-mp-parts-count'];
+            }
+            if ('content-range' in res.headers) {
+              data.ContentRange = res.headers['content-range'];
+            }
+            cb(null, data);
+          } else {
+            cb(new Error('unexpected status code'));
+          }
+        });
+      });
+      req.on('error', (err) => {
+        cb(err);
+      });
+      req.end();
+    }
+  });
+// FIXME return something wirh abort()
 }
 
 exports.download = (s3, {bucket, key, version}, {partSizeInMegabytes, concurrency, waitForWriteBeforeDownloladingNextPart}) => {
@@ -84,9 +163,7 @@ exports.download = (s3, {bucket, key, version}, {partSizeInMegabytes, concurrenc
       const endByte = Math.min(startByte+partSizeInBytes-1, bytesToDownload-1); // inclusive
       params.Range = `bytes=${startByte}-${endByte}`;
     }
-    const req = s3.getObject(params);
-    partsDownloading[partNo] = req;
-    req.send((err, data) => {
+    const req = getObject(params, (err, data) => {
       delete partsDownloading[partNo];
       if (err) {
         cb(err);
@@ -94,6 +171,7 @@ exports.download = (s3, {bucket, key, version}, {partSizeInMegabytes, concurrenc
         cb(null, data);
       }
     });
+    partsDownloading[partNo] = req;
   }
 
   function downloadNextPart() {
@@ -138,7 +216,7 @@ exports.download = (s3, {bucket, key, version}, {partSizeInMegabytes, concurrenc
       const endByte = partSizeInBytes-1; // inclusive
       params.Range = `bytes=0-${endByte}`;
     }
-    s3.getObject(params, (err, data) => {
+    getObject(params, (err, data) => {
       if (err) {
         stream.destroy(err);
       } else {
