@@ -1,6 +1,8 @@
 # S3 GetObject Accelerator
 
-Get large objects from S3 by using parallel byte-range fetches/parts to improve performance.
+Get large objects from S3 by using parallel byte-range fetches/parts without the AWS SDK to improve performance.
+
+> We measured a troughoput of 6.5 Gbit/s on an m5zn.6xlarge in eu-west-1 using this lib with this settings: `{concurrency: 64}`.
 
 Install:
 
@@ -11,15 +13,12 @@ npm i s3-getobject-accelerator
 Use:
 
 ```js
-const AWS = require('aws-sdk');
 const {createWriteStream} = require('node:fs');
 const {pipeline} = require('node:stream');
 const {download} = require('s3-getobject-accelerator');
 
-const s3 = new AWS.S3({apiVersion: '2006-03-01'});
-
 pipeline(
-  download(s3, {bucket: 'bucket', key: 'key', version: 'optional version'}, {partSizeInMegabytes: 8, concurrency: 4}).readStream(),
+  download({bucket: 'bucket', key: 'key', version: 'optional version'}, {partSizeInMegabytes: 8, concurrency: 4}).readStream(),
   createWriteStream('/tmp/test'),
   (err) => {
     if (err) {
@@ -34,14 +33,11 @@ pipeline(
 Get insights into the part downloads:
 
 ```js
-const AWS = require('aws-sdk');
 const {createWriteStream} = require('node:fs');
 const {pipeline} = require('node:stream');
 const {download} = require('s3-getobject-accelerator');
 
-const s3 = new AWS.S3({apiVersion: '2006-03-01'});
-
-const d = download(s3, {bucket: 'bucket', key: 'key', version: 'optional version'}, {partSizeInMegabytes: 8, concurrency: 4});
+const d = download({bucket: 'bucket', key: 'key', version: 'optional version'}, {partSizeInMegabytes: 8, concurrency: 4});
 d.on('part:downloading', ({partNo}) => {
   console.log('start downloading part', partNo);
 });
@@ -68,7 +64,6 @@ API:
 
 ```js
 download(
-  s3,                                  // AWS.S3 (v2 SDK)
   {
     bucket: 'bucket',                  // string
     key: 'key',                        // string
