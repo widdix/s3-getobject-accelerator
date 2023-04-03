@@ -98,7 +98,7 @@ describe('handler', () => {
           (err) => {
             if (err) {
               assert.ok(nock.isDone());
-              assert.deepStrictEqual(err.message, 'unexpected status code');
+              assert.deepStrictEqual(err.message, 'unexpected status code: 500.\n');
               done();
             } else {
               assert.fail();
@@ -156,7 +156,7 @@ describe('handler', () => {
           (err) => {
             if (err) {
               assert.ok(nock.isDone());
-              assert.deepStrictEqual(err.message, 'unexpected status code');
+              assert.deepStrictEqual(err.message, 'unexpected status code: 500.\n');
               done();
             } else {
               assert.fail();
@@ -338,7 +338,7 @@ describe('handler', () => {
           (err) => {
             if (err) {
               assert.ok(nock.isDone());
-              assert.deepStrictEqual(err.message, 'unexpected status code');
+              assert.deepStrictEqual(err.message, 'unexpected status code: 500.\n');
               done();
             } else {
               assert.fail();
@@ -444,7 +444,7 @@ describe('handler', () => {
           (err) => {
             if (err) {
               assert.ok(nock.isDone());
-              assert.deepStrictEqual(err.message, 'unexpected status code');
+              assert.deepStrictEqual(err.message, 'unexpected status code: 500.\n');
               done();
             } else {
               assert.fail();

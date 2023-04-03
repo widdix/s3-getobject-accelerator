@@ -1,5 +1,6 @@
-const { PassThrough } = require('node:stream');
-const { EventEmitter } = require('node:events');
+const {PassThrough} = require('node:stream');
+const {EventEmitter} = require('node:events');
+const {createWriteStream} = require('node:fs');
 const querystring = require('node:querystring');
 const dns = require('node:dns');
 const https = require('node:https');
@@ -22,7 +23,6 @@ function parseContentRange(contentRange) {
 }
 
 function imdsRequest(method, path, headers, cb) {
-  console.log('imdsRequest', [method, path]);
   const options = {
     hostname: '169.254.169.254',
     method,
@@ -31,23 +31,24 @@ function imdsRequest(method, path, headers, cb) {
     timeout: 3000
   };
   const req = http.request(options, (res) => {
+    const size = ('content-length' in res.headers) ? parseInt(res.headers['content-length'], 10) : 0;
+    const body = Buffer.allocUnsafe(size);
+    let bodyOffset = 0;
+    res.on('data', chunk => {
+      chunk.copy(body, bodyOffset);
+      bodyOffset =+ chunk.length;
+    });
     if (res.statusCode === 200) {
-      const size = parseInt(res.headers['content-length'], 10);
-      const body = Buffer.allocUnsafe(size);
-      let bodyOffset = 0;
-      res.on('data', chunk => {
-        chunk.copy(body, bodyOffset);
-        bodyOffset =+ chunk.length;
-      });
       res.on('end', () => {
         cb(null, body.toString('utf8'));
       });
     } else {
-      cb(new Error('unexpected status code: ' + res.statusCode));
+      res.on('end', () => {
+        cb(new Error(`unexpected status code: ${res.statusCode}.\n${body.toString('utf8')}`));
+      });
     }
   });
   req.on('error', (err) => {
-    console.log('error');
     cb(err);
   });
   req.on('timeout', () => {
@@ -153,7 +154,7 @@ exports.download = ({bucket, key, version}, {partSizeInMegabytes, concurrency, w
 
   const emitter = new EventEmitter();
   const partSizeInBytes = (partSizeInMegabytes !== undefined && partSizeInMegabytes !== null) ? partSizeInMegabytes*1000000 : null;
-  const stream = new PassThrough();
+  let stream = null;
 
   let started = false;
   let partsToDownload = -1;
@@ -225,14 +226,14 @@ exports.download = ({bucket, key, version}, {partSizeInMegabytes, concurrency, w
               timeout: 3000
             }, credentials);
             const req = https.request(options, (res) => {
+              const size = ('content-length' in res.headers) ? parseInt(res.headers['content-length'], 10) : 0;
+              const body = Buffer.allocUnsafe(size);
+              let bodyOffset = 0;
+              res.on('data', chunk => {
+                chunk.copy(body, bodyOffset);
+                bodyOffset =+ chunk.length;
+              });
               if (res.statusCode === 206) {
-                const size = parseInt(res.headers['content-length'], 10);
-                const body = Buffer.allocUnsafe(size);
-                let bodyOffset = 0;
-                res.on('data', chunk => {
-                  chunk.copy(body, bodyOffset);
-                  bodyOffset =+ chunk.length;
-                });
                 res.on('end', () => {
                   const data = {
                     Body: body,
@@ -247,7 +248,9 @@ exports.download = ({bucket, key, version}, {partSizeInMegabytes, concurrency, w
                   cb(null, data);
                 });
               } else {
-                cb(new Error('unexpected status code'));
+                res.on('end', () => {
+                  cb(new Error(`unexpected status code: ${res.statusCode}.\n${body.toString('utf8')}`));
+                });
               }
             });
             req.on('error', (err) => {
@@ -452,9 +455,18 @@ exports.download = ({bucket, key, version}, {partSizeInMegabytes, concurrency, w
   return {
     readStream: () => {
       if (started === false)  {
+        stream = new PassThrough();
         start();
       }
       return stream;
+    },
+    file: (path, cb) => {
+      if (started === false)  {
+        stream = createWriteStream(path);
+        start();
+      }
+      stream.once('end', () => cb());
+      stream.once('error', cb);
     },
     partsDownloading: () => Object.keys(partsDownloading).length,
     addListener: (eventName, listener) => emitter.addListener(eventName, listener),
