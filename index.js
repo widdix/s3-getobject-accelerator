@@ -193,6 +193,14 @@ exports.download = ({bucket, key, version}, {partSizeInMegabytes, concurrency, w
     }
   }
 
+  function escapeKey(string) { // source https://github.com/aws/aws-sdk-js/blob/64eb16f8e9a835e41cf47d0efd7bf43dcde9dcb9/lib/util.js#L39-L49
+    return encodeURIComponent(string)
+      .replace(/[^A-Za-z0-9_.~\-%]+/g, escape)
+      .replace(/[*]/g, function(ch) { // AWS percent-encodes some extra non-standard characters in a URI
+        return '%' + ch.charCodeAt(0).toString(16).toUpperCase();
+      });
+  }
+
   function getObject({Bucket, Key, VersionId, PartNumber, Range}, cb) {
     const ac = new AbortController();
     const qs = {};
@@ -217,7 +225,7 @@ exports.download = ({bucket, key, version}, {partSizeInMegabytes, concurrency, w
             const options = aws4.sign({
               hostname: getHostname(Bucket, region),
               method: 'GET',
-              path: `/${Key}?${querystring.stringify(qs)}`,
+              path: `/${escapeKey(Key)}?${querystring.stringify(qs)}`,
               headers,
               service: 's3',
               region,
