@@ -36,7 +36,7 @@ function imdsRequest(method, path, headers, cb) {
     let bodyOffset = 0;
     res.on('data', chunk => {
       chunk.copy(body, bodyOffset);
-      bodyOffset =+ chunk.length;
+      bodyOffset += chunk.length;
     });
     if (res.statusCode === 200) {
       res.on('end', () => {
@@ -239,7 +239,7 @@ exports.download = ({bucket, key, version}, {partSizeInMegabytes, concurrency, w
               let bodyOffset = 0;
               res.on('data', chunk => {
                 chunk.copy(body, bodyOffset);
-                bodyOffset =+ chunk.length;
+                bodyOffset += chunk.length;
               });
               if (res.statusCode === 206) {
                 res.on('end', () => {
