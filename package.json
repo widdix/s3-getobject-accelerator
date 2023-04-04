@@ -1,6 +1,6 @@
 {
   "name": "s3-getobject-accelerator",
-  "version": "2.1.1",
+  "version": "2.1.2",
   "description": "Get large objects from S3 by using parallel byte-range fetches/parts to improve performance.",
   "main": "index.js",
   "scripts": {
