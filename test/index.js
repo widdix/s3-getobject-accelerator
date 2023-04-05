@@ -74,37 +74,138 @@ describe('handler', () => {
   });
   describe('without partSizeInMegabytes', () => {
     describe('one part', () => {
-      it('download error', (done) => {
-        nock('https://bucket.s3.eu-west-1.amazonaws.com', {
-          reqheaders: {
-            'x-amz-content-sha256': /.*/,
-            'x-amz-date': /.*/,
-            authorization: /.*/
-          }
-        })
-          .get('/key')
-          .query({
-            versionId: 'version',
-            partNumber: '1'
-          })
-          .reply(500);
-        mockfs({
-          '/tmp': {
-          }
-        });
-        pipeline(
-          download({bucket:'bucket', key: 'key', version: 'version'}, {concurrency: 4}).readStream(),
-          fs.createWriteStream('/tmp/test'),
-          (err) => {
-            if (err) {
-              assert.ok(nock.isDone());
-              assert.deepStrictEqual(err.message, 'unexpected status code: 500.\n');
-              done();
-            } else {
-              assert.fail();
+      describe('error', () => {
+        it('NoSuchBucket', (done) => {
+          nock('https://bucket.s3.eu-west-1.amazonaws.com', {
+            reqheaders: {
+              'x-amz-content-sha256': /.*/,
+              'x-amz-date': /.*/,
+              authorization: /.*/
             }
-          }
-        );
+          })
+            .get('/key')
+            .query({
+              versionId: 'version',
+              partNumber: '1'
+            })
+            .reply(404, '<?xml version="1.0" encoding="UTF-8"?>\n<Error><Code>NoSuchBucket</Code><Message>The specified bucket does not exist</Message><BucketName>bucketav-clean-files2</BucketName><RequestId>QRN2ST0SDNGGGMCD</RequestId><HostId>JiyCd7RRDjasxosfjcsggJiZm6ukcqJLb/wQ7n0K07BzKkJ8qhfIu/wfCNyroNCx/ET8TOjm0Rg=</HostId></Error>', {'x-amz-request-id': 'QRN2ST0SDNGGGMCD', 'x-amz-id-2': 'JiyCd7RRDjasxosfjcsggJiZm6ukcqJLb/wQ7n0K07BzKkJ8qhfIu/wfCNyroNCx/ET8TOjm0Rg=', 'Content-Type': 'application/xml', 'Transfer-Encoding': 'chunked', 'Date': 'Wed, 05 Apr 2023 07:06:23 GMT', 'Server': 'AmazonS3'});
+          mockfs({
+            '/tmp': {
+            }
+          });
+          pipeline(
+            download({bucket:'bucket', key: 'key', version: 'version'}, {concurrency: 4}).readStream(),
+            fs.createWriteStream('/tmp/test'),
+            (err) => {
+              if (err) {
+                assert.ok(nock.isDone());
+                assert.deepStrictEqual(err.code, 'NoSuchBucket');
+                assert.deepStrictEqual(err.message, 'NoSuchBucket: The specified bucket does not exist');
+                done();
+              } else {
+                assert.fail();
+              }
+            }
+          );
+        });
+        it('NoSuchKey', (done) => {
+          nock('https://bucket.s3.eu-west-1.amazonaws.com', {
+            reqheaders: {
+              'x-amz-content-sha256': /.*/,
+              'x-amz-date': /.*/,
+              authorization: /.*/
+            }
+          })
+            .get('/key')
+            .query({
+              versionId: 'version',
+              partNumber: '1'
+            })
+            .reply(404, '<?xml version="1.0" encoding="UTF-8"?>\n<Error><Code>NoSuchKey</Code><Message>The specified key does not exist.</Message><Key>2GB.bin</Key><RequestId>S5XB48D3GN8PFEHB</RequestId><HostId>Xse1YNlihaJ+G5oViGxs1m1ec4OnKJoIRxB45ha2yByUPEF38+Z/3bOfHPGCdMBFmFQxmgDXVfY=</HostId></Error>', {'x-amz-request-id': 'S5XB48D3GN8PFEHB', 'x-amz-id-2': 'Xse1YNlihaJ+G5oViGxs1m1ec4OnKJoIRxB45ha2yByUPEF38+Z/3bOfHPGCdMBFmFQxmgDXVfY=', 'Content-Type': 'application/xml', 'Transfer-Encoding': 'chunked', 'Date': 'Wed, 05 Apr 2023 07:13:52 GMT', 'Server': 'AmazonS3'});
+          mockfs({
+            '/tmp': {
+            }
+          });
+          pipeline(
+            download({bucket:'bucket', key: 'key', version: 'version'}, {concurrency: 4}).readStream(),
+            fs.createWriteStream('/tmp/test'),
+            (err) => {
+              if (err) {
+                assert.ok(nock.isDone());
+                assert.deepStrictEqual(err.code, 'NoSuchKey');
+                assert.deepStrictEqual(err.message, 'NoSuchKey: The specified key does not exist.');
+                done();
+              } else {
+                assert.fail();
+              }
+            }
+          );
+        });
+        it('AccessDenied', (done) => {
+          nock('https://bucket.s3.eu-west-1.amazonaws.com', {
+            reqheaders: {
+              'x-amz-content-sha256': /.*/,
+              'x-amz-date': /.*/,
+              authorization: /.*/
+            }
+          })
+            .get('/key')
+            .query({
+              versionId: 'version',
+              partNumber: '1'
+            })
+            .reply(403, '<?xml version="1.0" encoding="UTF-8"?>\n<Error><Code>AccessDenied</Code><Message>Access Denied</Message><RequestId>KJBCKTP2T7C9E4S4</RequestId><HostId>oQvFUmi5gAQc3cj/go4bUeYfuSy9uDgcStq8a21HeXGM1Wc9+PbeK/05zFbCTDSpQS3GLVs1cHh+T8SCG5cl6Q==</HostId></Error>', {'x-amz-request-id': 'KJBCKTP2T7C9E4S4', 'x-amz-id-2': 'oQvFUmi5gAQc3cj/go4bUeYfuSy9uDgcStq8a21HeXGM1Wc9+PbeK/05zFbCTDSpQS3GLVs1cHh+T8SCG5cl6Q==', 'Content-Type': 'application/xml', 'Transfer-Encoding': 'chunked', 'Date': 'Wed, 05 Apr 2023 07:14:57 GMT', 'Server': 'AmazonS3'});
+          mockfs({
+            '/tmp': {
+            }
+          });
+          pipeline(
+            download({bucket:'bucket', key: 'key', version: 'version'}, {concurrency: 4}).readStream(),
+            fs.createWriteStream('/tmp/test'),
+            (err) => {
+              if (err) {
+                assert.ok(nock.isDone());
+                assert.deepStrictEqual(err.code, 'AccessDenied');
+                assert.deepStrictEqual(err.message, 'AccessDenied: Access Denied');
+                done();
+              } else {
+                assert.fail();
+              }
+            }
+          );
+        });
+        it('download error', (done) => {
+          nock('https://bucket.s3.eu-west-1.amazonaws.com', {
+            reqheaders: {
+              'x-amz-content-sha256': /.*/,
+              'x-amz-date': /.*/,
+              authorization: /.*/
+            }
+          })
+            .get('/key')
+            .query({
+              versionId: 'version',
+              partNumber: '1'
+            })
+            .reply(500);
+          mockfs({
+            '/tmp': {
+            }
+          });
+          pipeline(
+            download({bucket:'bucket', key: 'key', version: 'version'}, {concurrency: 4}).readStream(),
+            fs.createWriteStream('/tmp/test'),
+            (err) => {
+              if (err) {
+                assert.ok(nock.isDone());
+                assert.deepStrictEqual(err.message, 'unexpected S3 response (500):\n');
+                done();
+              } else {
+                assert.fail();
+              }
+            }
+          );
+        });
       });
       it('happy', (done) => {
         const bytes = 1000000;
@@ -144,7 +245,7 @@ describe('handler', () => {
             versionId: 'version',
             partNumber: '2'
           })
-          .reply(500);
+          .reply(500, 'body');
         nockPart(1000000, 3, 3);
         mockfs({
           '/tmp': {
@@ -156,7 +257,7 @@ describe('handler', () => {
           (err) => {
             if (err) {
               assert.ok(nock.isDone());
-              assert.deepStrictEqual(err.message, 'unexpected status code: 500.\n');
+              assert.deepStrictEqual(err.message, 'unexpected S3 response (500):\nbody');
               done();
             } else {
               assert.fail();
@@ -338,7 +439,7 @@ describe('handler', () => {
           (err) => {
             if (err) {
               assert.ok(nock.isDone());
-              assert.deepStrictEqual(err.message, 'unexpected status code: 500.\n');
+              assert.deepStrictEqual(err.message, 'unexpected S3 response (500):\n');
               done();
             } else {
               assert.fail();
@@ -444,7 +545,7 @@ describe('handler', () => {
           (err) => {
             if (err) {
               assert.ok(nock.isDone());
-              assert.deepStrictEqual(err.message, 'unexpected status code: 500.\n');
+              assert.deepStrictEqual(err.message, 'unexpected S3 response (500):\n');
               done();
             } else {
               assert.fail();

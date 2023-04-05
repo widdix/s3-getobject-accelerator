@@ -6,6 +6,7 @@ const dns = require('node:dns');
 const https = require('node:https');
 const http = require('node:http');
 const aws4 = require('aws4');
+const {parseString} = require('xml2js');
 
 function parseContentRange(contentRange) {
   // bytes 0-7999999/1073741824
@@ -44,7 +45,7 @@ function imdsRequest(method, path, headers, cb) {
       });
     } else {
       res.on('end', () => {
-        cb(new Error(`unexpected status code: ${res.statusCode}.\n${body.toString('utf8')}`));
+        cb(new Error(`unexpected IMDS status code: ${res.statusCode}.\n${body.toString('utf8')}`));
       });
     }
   });
@@ -234,15 +235,24 @@ exports.download = ({bucket, key, version}, {partSizeInMegabytes, concurrency, w
               timeout: 3000
             }, credentials);
             const req = https.request(options, (res) => {
-              const size = ('content-length' in res.headers) ? parseInt(res.headers['content-length'], 10) : 0;
-              const body = Buffer.allocUnsafe(size);
-              let bodyOffset = 0;
+              let size = ('content-length' in res.headers) ? parseInt(res.headers['content-length'], 10) : undefined;
+              const chunks = (size !== undefined) ? undefined : [];
+              let body = (size !== undefined) ? Buffer.allocUnsafe(size) : undefined;
+              let bodyOffset = (size !== undefined) ? 0 : undefined;
               res.on('data', chunk => {
-                chunk.copy(body, bodyOffset);
-                bodyOffset += chunk.length;
+                if (size === undefined) {
+                  chunks.push(chunk);
+                } else {
+                  chunk.copy(body, bodyOffset);
+                  bodyOffset += chunk.length;
+                }
               });
               if (res.statusCode === 206) {
                 res.on('end', () => {
+                  if (size === undefined) {
+                    body = Buffer.concat(chunks);
+                    size = body.length;
+                  }
                   const data = {
                     Body: body,
                     ContentLength: size
@@ -257,7 +267,28 @@ exports.download = ({bucket, key, version}, {partSizeInMegabytes, concurrency, w
                 });
               } else {
                 res.on('end', () => {
-                  cb(new Error(`unexpected status code: ${res.statusCode}.\n${body.toString('utf8')}`));
+                  if (size === undefined) {
+                    body = Buffer.concat(chunks);
+                    size = body.length;
+                  }
+                  if (res.headers['content-type'] === 'application/xml') {
+                    parseString(body.toString('utf8'), {explicitArray: false}, function (err, result) {
+                      if (err) {
+                        cb(err);
+                      } else {
+                        if (result.Error && result.Error.Code && result.Error.Message) {
+                          const e = new Error(`${result.Error.Code}: ${result.Error.Message}`);
+                          e.code = result.Error.Code;
+                          e.statusCode = res.statusCode;
+                          cb(e);
+                        } else {
+                          cb(new Error(`unexpected S3 XML response (${res.statusCode}):\n${body.toString('utf8')}`));
+                        }
+                      }
+                    });
+                  } else {
+                    cb(new Error(`unexpected S3 response (${res.statusCode}):\n${body.toString('utf8')}`));
+                  }
                 });
               }
             });
@@ -431,7 +462,7 @@ exports.download = ({bucket, key, version}, {partSizeInMegabytes, concurrency, w
                 } else {
                   const contentRange = parseContentRange(data.ContentRange);
                   if (contentRange === undefined) {
-                    stream.destroy(new Error('unexpected content range'));
+                    stream.destroy(new Error(`unexpected S3 content range: ${data.ContentRange}`));
                     stop();
                   } else {
                     emitter.emit('part:downloaded', {partNo: 1});
