@@ -67,9 +67,10 @@ download(
     version: 'version'                 // optional string
   },
   {
-    partSizeInMegabytes: 8,                       // optional number > 0: if not specified, parts are downloaded as they were uploaded
-    concurrency: 4,                               // number > 0
-    waitForWriteBeforeDownloladingNextPart: false // optional boolean, defaults to false
+    partSizeInMegabytes: 8,                        // optional number > 0: if not specified, parts are downloaded as they were uploaded
+    concurrency: 4,                                // number > 0
+    waitForWriteBeforeDownloladingNextPart: false, // optional boolean, defaults to false
+    connectionTimeoutInMilliseconds: 3000          // optional number >= 0: zero means no timeout
   }
 ) : {
   readStream(),                         // ReadStream (see https://nodejs.org/api/stream.html#class-streamreadable)

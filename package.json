@@ -1,10 +1,10 @@
 {
   "name": "s3-getobject-accelerator",
-  "version": "2.1.3",
+  "version": "2.2.0",
   "description": "Get large objects from S3 by using parallel byte-range fetches/parts to improve performance.",
   "main": "index.js",
   "scripts": {
-    "test": "eslint . && c8 mocha"
+    "test": "eslint . && c8 mocha -t 5000"
   },
   "repository": {
     "type": "git",
@@ -18,13 +18,13 @@
   "homepage": "https://github.com/widdix/s3-getobject-accelerator#readme",
   "devDependencies": {
     "c8": "7.13.0",
-    "eslint": "8.36.0",
+    "eslint": "8.38.0",
     "mocha": "10.2.0",
     "mock-fs": "5.2.0",
     "nock": "13.3.0"
   },
   "dependencies": {
     "aws4": "1.12.0",
-    "xml2js": "0.4.23"
+    "xml2js": "0.5.0"
   }
 }

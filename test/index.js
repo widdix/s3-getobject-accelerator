@@ -3,7 +3,7 @@ const {pipeline} = require('node:stream');
 const fs = require('node:fs');
 const mockfs = require('mock-fs');
 const nock = require('nock');
-const {download} = require('../index.js');
+const {download, clear} = require('../index.js');
 
 function nockPart(partSize, partNumber, parts, optionalTimeout) {
   const headers = {
@@ -102,6 +102,7 @@ describe('index', () => {
     afterEach(() => {
       mockfs.restore();
       nock.cleanAll();
+      clear();
     });
     describe('without partSizeInMegabytes', () => {
       describe('one part', () => {
@@ -218,7 +219,7 @@ describe('index', () => {
                 versionId: 'version',
                 partNumber: '1'
               })
-              .reply(500);
+              .reply(403);
             mockfs({
               '/tmp': {
               }
@@ -229,7 +230,7 @@ describe('index', () => {
               (err) => {
                 if (err) {
                   assert.ok(nock.isDone());
-                  assert.deepStrictEqual(err.message, 'unexpected S3 response (500):\n');
+                  assert.deepStrictEqual(err.message, 'unexpected S3 response (403, undefined)');
                   done();
                 } else {
                   assert.fail();
@@ -276,7 +277,7 @@ describe('index', () => {
               versionId: 'version',
               partNumber: '2'
             })
-            .reply(500, 'body');
+            .reply(403);
           nockPart(1000000, 3, 3);
           mockfs({
             '/tmp': {
@@ -288,7 +289,7 @@ describe('index', () => {
             (err) => {
               if (err) {
                 assert.ok(nock.isDone());
-                assert.deepStrictEqual(err.message, 'unexpected S3 response (500):\nbody');
+                assert.deepStrictEqual(err.message, 'unexpected S3 response (403, undefined)');
                 done();
               } else {
                 assert.fail();
@@ -459,7 +460,7 @@ describe('index', () => {
             .query({
               versionId: 'version'
             })
-            .reply(500);
+            .reply(403);
           mockfs({
             '/tmp': {
             }
@@ -470,7 +471,7 @@ describe('index', () => {
             (err) => {
               if (err) {
                 assert.ok(nock.isDone());
-                assert.deepStrictEqual(err.message, 'unexpected S3 response (500):\n');
+                assert.deepStrictEqual(err.message, 'unexpected S3 response (403, undefined)');
                 done();
               } else {
                 assert.fail();
@@ -563,7 +564,7 @@ describe('index', () => {
             .query({
               versionId: 'version'
             })
-            .reply(500);
+            .reply(403);
           nockRange(16000000, 23999999, bytes);
           mockfs({
             '/tmp': {
@@ -575,7 +576,7 @@ describe('index', () => {
             (err) => {
               if (err) {
                 assert.ok(nock.isDone());
-                assert.deepStrictEqual(err.message, 'unexpected S3 response (500):\n');
+                assert.deepStrictEqual(err.message, 'unexpected S3 response (403, undefined)');
                 done();
               } else {
                 assert.fail();
@@ -755,14 +756,277 @@ describe('index', () => {
         });
       });
     });
+    describe('S3 retries', () => {
+      describe('timeout', () => {
+        it('recover', (done) => {
+          const bytes = 33000000;
+          nockRange(0, 7999999, bytes);
+          nockRange(8000000, 15999999, bytes);
+          nock('https://bucket.s3.eu-west-1.amazonaws.com', {
+            reqheaders: {
+              range: 'bytes=16000000-23999999',
+              'x-amz-content-sha256': /.*/,
+              'x-amz-date': /.*/,
+              authorization: /.*/
+            }
+          })
+            .get('/key')
+            .query({
+              versionId: 'version'
+            })
+            .times(4)
+            .delayConnection(200)
+            .reply(206, Buffer.alloc(8000000), {
+              'Content-Length': '8000000',
+              'Content-Range': `bytes 16000000-23999999/${bytes}`
+            });
+          nockRange(16000000, 23999999, bytes);
+          nockRange(24000000, 31999999, bytes);
+          nockRange(32000000, 32999999, bytes);
+          mockfs({
+            '/tmp': {
+            }
+          });
+          const d = download({bucket:'bucket', key: 'key', version: 'version'}, {partSizeInMegabytes: 8, concurrency: 4, waitForWriteBeforeDownloladingNextPart: true, connectionTimeoutInMilliseconds: 100});
+          pipeline(
+            d.readStream(),
+            fs.createWriteStream('/tmp/test'),
+            (err) => {
+              if (err) {
+                done(err);
+              } else {
+                assert.ok(nock.isDone());
+                const {size} = fs.statSync('/tmp/test');
+                assert.deepStrictEqual(size, bytes);
+                done();
+              }
+            }
+          );
+        });
+        it('too many retries', (done) => {
+          const bytes = 33000000;
+          nockRange(0, 7999999, bytes);
+          nockRange(8000000, 15999999, bytes);
+          nock('https://bucket.s3.eu-west-1.amazonaws.com', {
+            reqheaders: {
+              range: 'bytes=16000000-23999999',
+              'x-amz-content-sha256': /.*/,
+              'x-amz-date': /.*/,
+              authorization: /.*/
+            }
+          })
+            .get('/key')
+            .query({
+              versionId: 'version'
+            })
+            .times(5)
+            .delayConnection(200)
+            .reply(206, Buffer.alloc(8000000), {
+              'Content-Length': '8000000',
+              'Content-Range': `bytes 16000000-23999999/${bytes}`
+            });
+          nockRange(24000000, 31999999, bytes);
+          nockRange(32000000, 32999999, bytes);
+          mockfs({
+            '/tmp': {
+            }
+          });
+          const d = download({bucket:'bucket', key: 'key', version: 'version'}, {partSizeInMegabytes: 8, concurrency: 4, waitForWriteBeforeDownloladingNextPart: true, connectionTimeoutInMilliseconds: 100});
+          pipeline(
+            d.readStream(),
+            fs.createWriteStream('/tmp/test'),
+            (err) => {
+              if (err) {
+                assert.ok(nock.isDone());
+                assert.deepStrictEqual(err.code, 'ECONNRESET');
+                done();
+              } else {
+                assert.fail();
+              }
+            }
+          );
+        });
+      });
+      describe('ECONNRESET', () => {
+        it('recover', (done) => {
+          const bytes = 33000000;
+          nockRange(0, 7999999, bytes);
+          nockRange(8000000, 15999999, bytes);
+          nock('https://bucket.s3.eu-west-1.amazonaws.com', {
+            reqheaders: {
+              range: 'bytes=16000000-23999999',
+              'x-amz-content-sha256': /.*/,
+              'x-amz-date': /.*/,
+              authorization: /.*/
+            }
+          })
+            .get('/key')
+            .query({
+              versionId: 'version'
+            })
+            .times(4)
+            .replyWithError({code: 'ECONNRESET'});
+          nockRange(16000000, 23999999, bytes);
+          nockRange(24000000, 31999999, bytes);
+          nockRange(32000000, 32999999, bytes);
+          mockfs({
+            '/tmp': {
+            }
+          });
+          const d = download({bucket:'bucket', key: 'key', version: 'version'}, {partSizeInMegabytes: 8, concurrency: 4, waitForWriteBeforeDownloladingNextPart: true});
+          pipeline(
+            d.readStream(),
+            fs.createWriteStream('/tmp/test'),
+            (err) => {
+              if (err) {
+                done(err);
+              } else {
+                assert.ok(nock.isDone());
+                const {size} = fs.statSync('/tmp/test');
+                assert.deepStrictEqual(size, bytes);
+                done();
+              }
+            }
+          );
+        });
+        it('too many retries', (done) => {
+          const bytes = 33000000;
+          nockRange(0, 7999999, bytes);
+          nockRange(8000000, 15999999, bytes);
+          nock('https://bucket.s3.eu-west-1.amazonaws.com', {
+            reqheaders: {
+              range: 'bytes=16000000-23999999',
+              'x-amz-content-sha256': /.*/,
+              'x-amz-date': /.*/,
+              authorization: /.*/
+            }
+          })
+            .get('/key')
+            .query({
+              versionId: 'version'
+            })
+            .times(5)
+            .replyWithError({code: 'ECONNRESET'});
+          nockRange(24000000, 31999999, bytes);
+          nockRange(32000000, 32999999, bytes);
+          mockfs({
+            '/tmp': {
+            }
+          });
+          const d = download({bucket:'bucket', key: 'key', version: 'version'}, {partSizeInMegabytes: 8, concurrency: 4, waitForWriteBeforeDownloladingNextPart: true});
+          pipeline(
+            d.readStream(),
+            fs.createWriteStream('/tmp/test'),
+            (err) => {
+              if (err) {
+                assert.ok(nock.isDone());
+                assert.deepStrictEqual(err.code, 'ECONNRESET');
+                done();
+              } else {
+                assert.fail();
+              }
+            }
+          );
+        });
+      });
+      describe('5XX', () => {
+        it('recover', (done) => {
+          const bytes = 33000000;
+          nockRange(0, 7999999, bytes);
+          nockRange(8000000, 15999999, bytes);
+          nock('https://bucket.s3.eu-west-1.amazonaws.com', {
+            reqheaders: {
+              range: 'bytes=16000000-23999999',
+              'x-amz-content-sha256': /.*/,
+              'x-amz-date': /.*/,
+              authorization: /.*/
+            }
+          })
+            .get('/key')
+            .query({
+              versionId: 'version'
+            })
+            .times(4)
+            .reply(500);
+          nockRange(16000000, 23999999, bytes);
+          nockRange(24000000, 31999999, bytes);
+          nockRange(32000000, 32999999, bytes);
+          mockfs({
+            '/tmp': {
+            }
+          });
+          const d = download({bucket:'bucket', key: 'key', version: 'version'}, {partSizeInMegabytes: 8, concurrency: 4, waitForWriteBeforeDownloladingNextPart: true});
+          pipeline(
+            d.readStream(),
+            fs.createWriteStream('/tmp/test'),
+            (err) => {
+              if (err) {
+                done(err);
+              } else {
+                assert.ok(nock.isDone());
+                const {size} = fs.statSync('/tmp/test');
+                assert.deepStrictEqual(size, bytes);
+                done();
+              }
+            }
+          );
+        });
+        it('too many retries', (done) => {
+          const bytes = 33000000;
+          nockRange(0, 7999999, bytes);
+          nockRange(8000000, 15999999, bytes);
+          nock('https://bucket.s3.eu-west-1.amazonaws.com', {
+            reqheaders: {
+              range: 'bytes=16000000-23999999',
+              'x-amz-content-sha256': /.*/,
+              'x-amz-date': /.*/,
+              authorization: /.*/
+            }
+          })
+            .get('/key')
+            .query({
+              versionId: 'version'
+            })
+            .times(5)
+            .reply(500);
+          nockRange(24000000, 31999999, bytes);
+          nockRange(32000000, 32999999, bytes);
+          mockfs({
+            '/tmp': {
+            }
+          });
+          const d = download({bucket:'bucket', key: 'key', version: 'version'}, {partSizeInMegabytes: 8, concurrency: 4, waitForWriteBeforeDownloladingNextPart: true});
+          pipeline(
+            d.readStream(),
+            fs.createWriteStream('/tmp/test'),
+            (err) => {
+              if (err) {
+                assert.ok(nock.isDone());
+                assert.deepStrictEqual(err.message, 'status code: 500, content-type: undefined');
+                done();
+              } else {
+                assert.fail();
+              }
+            }
+          );
+        });
+      });
+    });
   });
   describe('credentials via IMDS', () => {
     before(() => {
       nock.disableNetConnect();
-      nockImds();
     });
     after(() => {
       nock.enableNetConnect();
+    });
+    beforeEach(() => {
+      nockImds();
+    });
+    afterEach(() => {
+      mockfs.restore();
+      nock.cleanAll();
+      clear();
     });
     it('happy', (done) => {
       const bytes = 8000000;
