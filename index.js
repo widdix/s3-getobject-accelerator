@@ -8,6 +8,23 @@ const http = require('node:http');
 const aws4 = require('aws4');
 const {parseString} = require('xml2js');
 
+const RETRIABLE_NETWORK_ERROR_CODES = ['ECONNRESET', 'ENOTFOUND', 'ESOCKETTIMEDOUT', 'ETIMEDOUT', 'ECONNREFUSED', 'EHOSTUNREACH', 'EPIPE', 'EAI_AGAIN', 'EBUSY'];
+
+// From AWS docs: We make new credentials available at least five minutes before the expiration of the old credentials.
+const AWS_CREDENTIALS_MAX_AGE_IN_MILLISECONDS = 4*60*1000;
+
+const DNS_RECORD_MAX_AGE_IN_MILLISECONDS = 10*1000;
+
+let imdsRegionCache = undefined;
+let imdsCredentialsCache = undefined;
+let dnsCache = {};
+
+exports.clearCache = () => {
+  imdsRegionCache = undefined;
+  imdsCredentialsCache = undefined;
+  dnsCache = {};
+};
+
 function parseContentRange(contentRange) {
   // bytes 0-7999999/1073741824
   if (contentRange.startsWith('bytes ')) {
@@ -23,60 +40,126 @@ function parseContentRange(contentRange) {
   }
 }
 
-function imdsRequest(method, path, headers, cb) {
+function request(nodemodule, options, body, cb) {
+  options.lookup = getDnsCache;
+  const req = nodemodule.request(options, (res) => {
+    let size = ('content-length' in res.headers) ? parseInt(res.headers['content-length'], 10) : undefined;
+    const chunks = (size !== undefined) ? undefined : [];
+    let body = (size !== undefined) ? Buffer.allocUnsafe(size) : undefined;
+    let bodyOffset = (size !== undefined) ? 0 : undefined;
+    res.on('data', chunk => {
+      if (size === undefined) {
+        chunks.push(chunk);
+      } else {
+        chunk.copy(body, bodyOffset);
+        bodyOffset += chunk.length;
+      }
+    });
+    res.on('end', () => {
+      if (size === undefined) {
+        body = Buffer.concat(chunks);
+        size = body.length;
+      }
+      cb(null, res, body);
+    });
+  });
+  req.once('error', (err) => {
+    cb(err);
+  });
+  req.once('timeout', () => {
+    req.abort();
+  });
+  if (Buffer.isBuffer(body)) {
+    req.write(body);
+  }
+  req.end();
+}
+exports.request = request;
+
+function retryrequest(nodemodule, requestOptions, body, retryOptions, cb) {
+  let attempt = 1;
+  const retry = (err) => {
+    attempt++;
+    if (attempt <= retryOptions.maxAttempts) {
+      const delay = Math.random() * (Math.pow(2, attempt-1) * 100);
+      setTimeout(() => {
+        if (requestOptions.signal) {
+          if (requestOptions.signal.aborted === true) {
+            cb(requestOptions.signal.reason);
+          } else {
+            req();
+          }
+        } else {
+          req();
+        }
+      }, delay);
+    } else {
+      cb(err);
+    }
+  };
+  const req = () => {
+    request(nodemodule, requestOptions, body, (err, res, body) => {
+      if (err) {
+        if (RETRIABLE_NETWORK_ERROR_CODES.includes(err.code)) {
+          retry(err);
+        } else {
+          cb(err);
+        }
+      } else {
+        if (res.statusCode == 429 || (res.statusCode >= 500 && res.statusCode <= 599)) {
+          if (res.headers['content-type'] === 'application/xml') {
+            retry(new Error(`status code: ${res.statusCode}\n${body.toString('utf8')}`));
+          } else {
+            retry(new Error(`status code: ${res.statusCode}, content-type: ${res.headers['content-type']}`));
+          }
+        } else {
+          cb(null, res, body);
+        }
+      }
+    });
+  };
+  req();
+}
+exports.retryrequest = retryrequest;
+
+function imdsRequest(method, path, headers, timeout, cb) {
   const options = {
     hostname: '169.254.169.254',
     method,
     path,
     headers,
-    timeout: 3000
+    timeout
   };
-  const req = http.request(options, (res) => {
-    const size = ('content-length' in res.headers) ? parseInt(res.headers['content-length'], 10) : 0;
-    const body = Buffer.allocUnsafe(size);
-    let bodyOffset = 0;
-    res.on('data', chunk => {
-      chunk.copy(body, bodyOffset);
-      bodyOffset += chunk.length;
-    });
-    if (res.statusCode === 200) {
-      res.on('end', () => {
-        cb(null, body.toString('utf8'));
-      });
-    } else {
-      res.on('end', () => {
-        cb(new Error(`unexpected IMDS status code: ${res.statusCode}.\n${body.toString('utf8')}`));
-      });
-    }
-  });
-  req.on('error', (err) => {
-    cb(err);
-  });
-  req.on('timeout', () => {
-    req.abort();
-    cb(new Error('IMDS request timeout'));
-  });
-  req.end();
-}
-
-function imds(path, cb) {
-  imdsRequest('PUT', '/latest/api/token', {'X-aws-ec2-metadata-token-ttl-seconds': '60'}, (err, token) => {
+  retryrequest(http, options, undefined, {maxAttempts: 3}, (err, res, body) => {
     if (err) {
       cb(err);
     } else {
-      imdsRequest('GET', path, {'X-aws-ec2-metadata-token': token}, cb);
+      if (res.statusCode === 200) {
+        cb(null, body.toString('utf8'));
+      } else {
+        cb(new Error(`unexpected IMDS status code: ${res.statusCode}.\n${body.toString('utf8')}`));
+      }
     }
   });
 }
 
-let imdsRegionCache = null;
+function imds(path, timeout, cb) {
+  imdsRequest('PUT', '/latest/api/token', {'X-aws-ec2-metadata-token-ttl-seconds': '60'}, timeout, (err, token) => {
+    if (err) {
+      cb(err);
+    } else {
+      imdsRequest('GET', path, {'X-aws-ec2-metadata-token': token}, timeout, cb);
+    }
+  });
+}
+exports.imds = imds;
 
-function refreshAwsRegion() {
+function refreshAwsRegion(timeout) {
   imdsRegionCache = new Promise((resolve, reject) => {
     if ('AWS_REGION' in process.env) {
       resolve(process.env.AWS_REGION);
     } else {
-      imds('/latest/dynamic/instance-identity/document', (err, body) => {
+      imds('/latest/dynamic/instance-identity/document', timeout, (err, body) => {
         if (err) {
           reject(err);
         } else {
@@ -86,19 +169,18 @@ function refreshAwsRegion() {
       });
     }
   });
+  return imdsRegionCache;
 }
 
-function getAwsRegion(cb) {
-  if (imdsRegionCache === null) {
-    cb(new Error('region cache empty'));
+function getAwsRegion(timeout, cb) {
+  if (imdsRegionCache === undefined) {
+    refreshAwsRegion(timeout).then(region => cb(null, region)).catch(cb);
   } else {
     imdsRegionCache.then(region => cb(null, region)).catch(cb);
   }
 }
 
-let imdsCredentialsCache = null;
-
-function refreshAwsCredentials() {
+function refreshAwsCredentials(timeout) {
   imdsCredentialsCache = new Promise((resolve, reject) => {
     if ('AWS_ACCESS_KEY_ID' in process.env && 'AWS_SECRET_ACCESS_KEY' in process.env) {
       const credentials = {
@@ -110,12 +192,12 @@ function refreshAwsCredentials() {
       }
       resolve(credentials);
     } else {
-      imds('/latest/meta-data/iam/security-credentials/', (err, body) => {
+      imds('/latest/meta-data/iam/security-credentials/', timeout, (err, body) => {
         if (err) {
           reject(err);
         } else {
           const roleName = body.trim();
-          imds(`/latest/meta-data/iam/security-credentials/${roleName}`, (err, body) => {
+          imds(`/latest/meta-data/iam/security-credentials/${roleName}`, timeout, (err, body) => {
             if (err) {
               reject(err);
             } else {
@@ -123,7 +205,8 @@ function refreshAwsCredentials() {
               resolve({
                 accessKeyId: json.AccessKeyId,
                 secretAccessKey: json.SecretAccessKey,
-                sessionToken: json.Token
+                sessionToken: json.Token,
+                cachedAt: Date.now()
               });
             }
           });
@@ -131,13 +214,70 @@ function refreshAwsCredentials() {
       });
     }
   });
+  return imdsCredentialsCache;
 }
 
-function getAwsCredentials(cb) {
-  if (imdsCredentialsCache === null) {
-    cb(new Error('credentials cache empty'));
+function getAwsCredentials(timeout, cb) {
+  if (imdsCredentialsCache === undefined) {
+    refreshAwsCredentials(timeout).then(credentials => cb(null, credentials)).catch(cb);
   } else {
-    imdsCredentialsCache.then(credentials => cb(null, credentials)).catch(cb);
+    imdsCredentialsCache.then(credentials => {
+      if ((Date.now()-credentials.cachedAt) > AWS_CREDENTIALS_MAX_AGE_IN_MILLISECONDS) {
+        imdsCredentialsCache = undefined;
+        getAwsCredentials(timeout, cb);
+      } else {
+        cb(null, credentials);
+      }
+    }).catch(cb);
+  }
+}
+
+function getRecord() {
+  const record = this.records[this.ringIndex++];
+  if (this.ringIndex >= this.records.length) {
+    this.ringIndex = 0;
+  }
+  return record;
+}
+
+function refreshDnsCache(hostname, options) { // eslint-disable-line no-unused-vars
+  // A = IPv4
+  dnsCache[hostname] = new Promise((resolve, reject) => {
+    dns.resolve(hostname, 'A', (err, records) => {
+      if (err) {
+        reject(err);
+      } else {
+        if (records.length === 0) {
+          reject(new Error('no DNS records returned'));
+        } else {
+          resolve({
+            ringIndex: 0,
+            records,
+            cachedAt: Date.now(),
+            getRecord
+          });
+        }
+      }
+    });
+  });
+  return dnsCache[hostname];
+}
+
+// signature is defined by Node.js (https://nodejs.org/api/dns.html#dnslookuphostname-options-callback)
+function getDnsCache(hostname, options, cb) {
+  // 4 = IPv4
+  const cache = dnsCache[hostname];
+  if (cache === undefined) {
+    refreshDnsCache(hostname, options).then(dns => cb(null, dns.getRecord(), 4)).catch(cb);
+  } else {
+    cache.then(dns => {
+      if ((Date.now()-dns.cachedAt) > DNS_RECORD_MAX_AGE_IN_MILLISECONDS) {
+        delete dnsCache[hostname];
+        getDnsCache(hostname, options, cb);
+      } else {
+        cb(null, dns.getRecord(), 4);
+      }
+    }).catch(cb);
   }
 }
 
@@ -145,16 +285,37 @@ function getHostname(bucket, region) {
   return `${bucket}.s3.${region}.amazonaws.com`;
 }
 
-exports.download = ({bucket, key, version}, {partSizeInMegabytes, concurrency, waitForWriteBeforeDownloladingNextPart}) => {
-  if (partSizeInMegabytes !== undefined && partSizeInMegabytes !== null && partSizeInMegabytes <= 0) {
+function mapTimeout(connectionTimeoutInMilliseconds) {
+  if (connectionTimeoutInMilliseconds === undefined || connectionTimeoutInMilliseconds === null) {
+    return 3000;
+  }
+  if (connectionTimeoutInMilliseconds < 0) {
+    throw new Error('connectionTimeoutInMilliseconds >= 0');
+  }
+  if (connectionTimeoutInMilliseconds === 0) {
+    return undefined;
+  }
+  return connectionTimeoutInMilliseconds;
+}
+
+function mapPartSizeInBytes(partSizeInMegabytes) {
+  if (partSizeInMegabytes === undefined || partSizeInMegabytes === null) {
+    return null;
+  }
+  if (partSizeInMegabytes <= 0) {
     throw new Error('partSizeInMegabytes > 0');
   }
+  return partSizeInMegabytes*1000000;
+}
+
+exports.download = ({bucket, key, version}, {partSizeInMegabytes, concurrency, waitForWriteBeforeDownloladingNextPart, connectionTimeoutInMilliseconds}) => {
   if (concurrency < 1) {
     throw new Error('concurrency > 0');
   }
+  const timeout = mapTimeout(connectionTimeoutInMilliseconds);
 
   const emitter = new EventEmitter();
-  const partSizeInBytes = (partSizeInMegabytes !== undefined && partSizeInMegabytes !== null) ? partSizeInMegabytes*1000000 : null;
+  const partSizeInBytes = mapPartSizeInBytes(partSizeInMegabytes);
   let stream = null;
 
   let started = false;
@@ -165,34 +326,6 @@ exports.download = ({bucket, key, version}, {partSizeInMegabytes, concurrency, w
   const partsWaitingForWrite = {};
   const partsDownloading = {};
   let aborted = false;
-  let dnsCacheInterval = null;
-  let dnsCache = [];
-  let dnsCacheRingIndex = 0;
-
-  function populateDnsCache(hostname, cb) {
-    dns.resolve(hostname, 'A', (err, records) => { // A = IPv4
-      if (err) {
-        cb(err);
-      } else {
-        dnsCache = records;
-        emitter.emit('dns:updated', [...dnsCache]);
-        dnsCacheRingIndex = 0;
-        cb();
-      }
-    });
-  }
-
-  function lookup(hostname, options, cb) {
-    if (dnsCache.length === 0) {
-      cb(new Error('DNS cache empty'));
-    } else {
-      const cachedRecord = dnsCache[dnsCacheRingIndex++];
-      if (dnsCacheRingIndex >= dnsCache.length) {
-        dnsCacheRingIndex = 0;
-      }
-      cb(null, cachedRecord, 4); // 4 = IPv4
-    }
-  }
 
   function escapeKey(string) { // source https://github.com/aws/aws-sdk-js/blob/64eb16f8e9a835e41cf47d0efd7bf43dcde9dcb9/lib/util.js#L39-L49
     return encodeURIComponent(string)
@@ -215,11 +348,11 @@ exports.download = ({bucket, key, version}, {partSizeInMegabytes, concurrency, w
     if (Range !== undefined && Range !== null) {
       headers.Range = Range;
     }
-    getAwsRegion((err, region) => {
+    getAwsRegion(timeout, (err, region) => {
       if (err) {
         cb(err);
       } else {
-        getAwsCredentials((err, credentials) => {
+        getAwsCredentials(timeout, (err, credentials) => {
           if (err) {
             cb(err);
           } else {
@@ -231,31 +364,16 @@ exports.download = ({bucket, key, version}, {partSizeInMegabytes, concurrency, w
               service: 's3',
               region,
               signal: ac.signal,
-              lookup,
-              timeout: 3000
+              timeout
             }, credentials);
-            const req = https.request(options, (res) => {
-              let size = ('content-length' in res.headers) ? parseInt(res.headers['content-length'], 10) : undefined;
-              const chunks = (size !== undefined) ? undefined : [];
-              let body = (size !== undefined) ? Buffer.allocUnsafe(size) : undefined;
-              let bodyOffset = (size !== undefined) ? 0 : undefined;
-              res.on('data', chunk => {
-                if (size === undefined) {
-                  chunks.push(chunk);
-                } else {
-                  chunk.copy(body, bodyOffset);
-                  bodyOffset += chunk.length;
-                }
-              });
-              if (res.statusCode === 206) {
-                res.on('end', () => {
-                  if (size === undefined) {
-                    body = Buffer.concat(chunks);
-                    size = body.length;
-                  }
+            retryrequest(https, options, undefined, {maxAttempts: 5}, (err, res, body) => {
+              if (err) {
+                cb(err);
+              } else {
+                if (res.statusCode === 206) {
                   const data = {
                     Body: body,
-                    ContentLength: size
+                    ContentLength: body.length
                   };
                   if ('x-amz-mp-parts-count' in res.headers) {
                     data.PartsCount = parseInt(res.headers['x-amz-mp-parts-count'], 10);
@@ -264,13 +382,7 @@ exports.download = ({bucket, key, version}, {partSizeInMegabytes, concurrency, w
                     data.ContentRange = res.headers['content-range'];
                   }
                   cb(null, data);
-                });
-              } else {
-                res.on('end', () => {
-                  if (size === undefined) {
-                    body = Buffer.concat(chunks);
-                    size = body.length;
-                  }
+                } else {
                   if (res.headers['content-type'] === 'application/xml') {
                     parseString(body.toString('utf8'), {explicitArray: false}, function (err, result) {
                       if (err) {
@@ -287,19 +399,11 @@ exports.download = ({bucket, key, version}, {partSizeInMegabytes, concurrency, w
                       }
                     });
                   } else {
-                    cb(new Error(`unexpected S3 response (${res.statusCode}):\n${body.toString('utf8')}`));
+                    cb(new Error(`unexpected S3 response (${res.statusCode}, ${res.headers['content-type']})`));
                   }
-                });
+                }
               }
             });
-            req.on('error', (err) => {
-              cb(err);
-            });
-            req.on('timeout', () => {
-              req.abort();
-              cb(new Error('S3 request timeout'));
-            });
-            req.end();
           }
         });
       }
@@ -308,10 +412,7 @@ exports.download = ({bucket, key, version}, {partSizeInMegabytes, concurrency, w
   }
 
   function stop() {
-    if (dnsCacheInterval !== null) {
-      clearInterval(dnsCacheInterval);
-      dnsCacheInterval = null;
-    }
+
   }
 
   function write(chunk, cb) {
@@ -411,82 +512,63 @@ exports.download = ({bucket, key, version}, {partSizeInMegabytes, concurrency, w
   }
 
   function start() {
-    refreshAwsCredentials();
-    refreshAwsRegion();
-    getAwsRegion((err, region) => {
+    emitter.emit('part:downloading', {partNo: 1});
+    const params = {
+      Bucket: bucket,
+      Key: key,
+      VersionId: version
+    };
+    if (partSizeInBytes === null) {
+      params.PartNumber = 1;
+    } else {
+      const endByte = partSizeInBytes-1; // inclusive
+      params.Range = `bytes=0-${endByte}`;
+    }
+    getObject(params, (err, data) => {
       if (err) {
         stream.destroy(err);
         stop();
       } else {
-        dnsCacheInterval = setInterval(() => {
-          populateDnsCache(getHostname(bucket, region), () => {});
-        }, 5000);
-        populateDnsCache(getHostname(bucket, region), (err) => {
-          if (err) {
-            stream.destroy(err);
-            stop();
+        if (partSizeInBytes === null) {
+          emitter.emit('part:downloaded', {partNo: 1});
+          if ('PartsCount' in data && data.PartsCount > 1) {
+            write(data.Body, () => {
+              emitter.emit('part:done', {partNo: 1});
+              lastWrittenPartNo = 1;
+              nextPartNo = 2;
+              partsToDownload = data.PartsCount;
+              startDownloadingParts();
+            });
           } else {
-            emitter.emit('part:downloading', {partNo: 1});
-            const params = {
-              Bucket: bucket,
-              Key: key,
-              VersionId: version
-            };
-            if (partSizeInBytes === null) {
-              params.PartNumber = 1;
-            } else {
-              const endByte = partSizeInBytes-1; // inclusive
-              params.Range = `bytes=0-${endByte}`;
-            }
-            getObject(params, (err, data) => {
-              if (err) {
-                stream.destroy(err);
-                stop();
-              } else {
-                if (partSizeInBytes === null) {
-                  emitter.emit('part:downloaded', {partNo: 1});
-                  if ('PartsCount' in data && data.PartsCount > 1) {
-                    write(data.Body, () => {
-                      emitter.emit('part:done', {partNo: 1});
-                      lastWrittenPartNo = 1;
-                      nextPartNo = 2;
-                      partsToDownload = data.PartsCount;
-                      startDownloadingParts();
-                    });
-                  } else {
-                    stream.end(data.Body, () => {
-                      emitter.emit('part:done', {partNo: 1});
-                      stop();
-                    });
-                  }
-                } else {
-                  const contentRange = parseContentRange(data.ContentRange);
-                  if (contentRange === undefined) {
-                    stream.destroy(new Error(`unexpected S3 content range: ${data.ContentRange}`));
-                    stop();
-                  } else {
-                    emitter.emit('part:downloaded', {partNo: 1});
-                    bytesToDownload = contentRange.length;
-                    if (bytesToDownload <= partSizeInBytes) {
-                      stream.end(data.Body, () => {
-                        emitter.emit('part:done', {partNo: 1});
-                        stop();
-                      });
-                    } else {
-                      write(data.Body, () => {
-                        emitter.emit('part:done', {partNo: 1});
-                        lastWrittenPartNo = 1;
-                        nextPartNo = 2;
-                        partsToDownload = Math.ceil(bytesToDownload/partSizeInBytes);
-                        startDownloadingParts();
-                      });
-                    }
-                  }
-                }
-              }
+            stream.end(data.Body, () => {
+              emitter.emit('part:done', {partNo: 1});
+              stop();
             });
           }
-        });
+        } else {
+          const contentRange = parseContentRange(data.ContentRange);
+          if (contentRange === undefined) {
+            stream.destroy(new Error(`unexpected S3 content range: ${data.ContentRange}`));
+            stop();
+          } else {
+            emitter.emit('part:downloaded', {partNo: 1});
+            bytesToDownload = contentRange.length;
+            if (bytesToDownload <= partSizeInBytes) {
+              stream.end(data.Body, () => {
+                emitter.emit('part:done', {partNo: 1});
+                stop();
+              });
+            } else {
+              write(data.Body, () => {
+                emitter.emit('part:done', {partNo: 1});
+                lastWrittenPartNo = 1;
+                nextPartNo = 2;
+                partsToDownload = Math.ceil(bytesToDownload/partSizeInBytes);
+                startDownloadingParts();
+              });
+            }
+          }
+        }
       }
     });
   }
