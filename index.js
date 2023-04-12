@@ -8,6 +8,23 @@ const http = require('node:http');
 const aws4 = require('aws4');
 const {parseString} = require('xml2js');
 
+const RETRIABLE_NETWORK_ERROR_CODES = ['ECONNRESET', 'ENOTFOUND', 'ESOCKETTIMEDOUT', 'ETIMEDOUT', 'ECONNREFUSED', 'EHOSTUNREACH', 'EPIPE', 'EAI_AGAIN', 'EBUSY'];
+
+// From AWS docs: We make new credentials available at least five minutes before the expiration of the old credentials.
+const AWS_CREDENTIALS_MAX_AGE_IN_MILLISECONDS = 4*60*1000;
+
+const DNS_RECORD_MAX_AGE_IN_MILLISECONDS = 10*1000;
+
+let imdsRegionCache = undefined;
+let imdsCredentialsCache = undefined;
+let dnsCache = {};
+
+exports.clearCache = () => {
+  imdsRegionCache = undefined;
+  imdsCredentialsCache = undefined;
+  dnsCache = {};
+};
+
 function parseContentRange(contentRange) {
   // bytes 0-7999999/1073741824
   if (contentRange.startsWith('bytes ')) {
@@ -23,7 +40,8 @@ function parseContentRange(contentRange) {
   }
 }
 
-function request(nodemodule, options, cb) {
+function request(nodemodule, options, body, cb) {
+  options.lookup = getDnsCache;
   const req = nodemodule.request(options, (res) => {
     let size = ('content-length' in res.headers) ? parseInt(res.headers['content-length'], 10) : undefined;
     const chunks = (size !== undefined) ? undefined : [];
@@ -51,12 +69,14 @@ function request(nodemodule, options, cb) {
   req.once('timeout', () => {
     req.abort();
   });
+  if (Buffer.isBuffer(body)) {
+    req.write(body);
+  }
   req.end();
 }
+exports.request = request;
 
-const RETRIABLE_NETWORK_ERROR_CODES = ['ECONNRESET', 'ENOTFOUND', 'ESOCKETTIMEDOUT', 'ETIMEDOUT', 'ECONNREFUSED', 'EHOSTUNREACH', 'EPIPE', 'EAI_AGAIN', 'EBUSY'];
-
-function retryrequest(nodemodule, requestOptions, retryOptions, cb) {
+function retryrequest(nodemodule, requestOptions, body, retryOptions, cb) {
   let attempt = 1;
   const retry = (err) => {
     attempt++;
@@ -78,7 +98,7 @@ function retryrequest(nodemodule, requestOptions, retryOptions, cb) {
     }
   };
   const req = () => {
-    request(nodemodule, requestOptions, (err, res, body) => {
+    request(nodemodule, requestOptions, body, (err, res, body) => {
       if (err) {
         if (RETRIABLE_NETWORK_ERROR_CODES.includes(err.code)) {
           retry(err);
@@ -100,6 +120,7 @@ function retryrequest(nodemodule, requestOptions, retryOptions, cb) {
   };
   req();
 }
+exports.retryrequest = retryrequest;
 
 function imdsRequest(method, path, headers, timeout, cb) {
   const options = {
@@ -109,7 +130,7 @@ function imdsRequest(method, path, headers, timeout, cb) {
     headers,
     timeout
   };
-  retryrequest(http, options, {maxAttempts: 3}, (err, res, body) => {
+  retryrequest(http, options, undefined, {maxAttempts: 3}, (err, res, body) => {
     if (err) {
       cb(err);
     } else {
@@ -131,8 +152,7 @@ function imds(path, timeout, cb) {
     }
   });
 }
-
-let imdsRegionCache = null;
+exports.imds = imds;
 
 function refreshAwsRegion(timeout) {
   imdsRegionCache = new Promise((resolve, reject) => {
@@ -153,14 +173,12 @@ function refreshAwsRegion(timeout) {
 }
 
 function getAwsRegion(timeout, cb) {
-  if (imdsRegionCache === null) {
+  if (imdsRegionCache === undefined) {
     refreshAwsRegion(timeout).then(region => cb(null, region)).catch(cb);
   } else {
     imdsRegionCache.then(region => cb(null, region)).catch(cb);
   }
 }
-
-let imdsCredentialsCache = null;
 
 function refreshAwsCredentials(timeout) {
   imdsCredentialsCache = new Promise((resolve, reject) => {
@@ -199,20 +217,65 @@ function refreshAwsCredentials(timeout) {
   return imdsCredentialsCache;
 }
 
-// AWS docs: We make new credentials available at least five minutes before the expiration of the old credentials.
-const AWS_CREDENTIALS_MAX_AGE_IN_MILLISECONDS = 4*60*1000;
-
 function getAwsCredentials(timeout, cb) {
-  if (imdsCredentialsCache === null) {
+  if (imdsCredentialsCache === undefined) {
     refreshAwsCredentials(timeout).then(credentials => cb(null, credentials)).catch(cb);
   } else {
     imdsCredentialsCache.then(credentials => {
-      if ('cachedAt' in credentials && (Date.now()-credentials.cachedAt) > AWS_CREDENTIALS_MAX_AGE_IN_MILLISECONDS) {
-        console.log('refresh credentials');
-        imdsCredentialsCache = null;
+      if ((Date.now()-credentials.cachedAt) > AWS_CREDENTIALS_MAX_AGE_IN_MILLISECONDS) {
+        imdsCredentialsCache = undefined;
         getAwsCredentials(timeout, cb);
       } else {
         cb(null, credentials);
+      }
+    }).catch(cb);
+  }
+}
+
+function getRecord() {
+  const record = this.records[this.ringIndex++];
+  if (this.ringIndex >= this.records.length) {
+    this.ringIndex = 0;
+  }
+  return record;
+}
+
+function refreshDnsCache(hostname, options) { // eslint-disable-line no-unused-vars
+  // A = IPv4
+  dnsCache[hostname] = new Promise((resolve, reject) => {
+    dns.resolve(hostname, 'A', (err, records) => {
+      if (err) {
+        reject(err);
+      } else {
+        if (records.length === 0) {
+          reject(new Error('no DNS records returned'));
+        } else {
+          resolve({
+            ringIndex: 0,
+            records,
+            cachedAt: Date.now(),
+            getRecord
+          });
+        }
+      }
+    });
+  });
+  return dnsCache[hostname];
+}
+
+// signature is defined by Node.js (https://nodejs.org/api/dns.html#dnslookuphostname-options-callback)
+function getDnsCache(hostname, options, cb) {
+  // 4 = IPv4
+  const cache = dnsCache[hostname];
+  if (cache === undefined) {
+    refreshDnsCache(hostname, options).then(dns => cb(null, dns.getRecord(), 4)).catch(cb);
+  } else {
+    cache.then(dns => {
+      if ((Date.now()-dns.cachedAt) > DNS_RECORD_MAX_AGE_IN_MILLISECONDS) {
+        delete dnsCache[hostname];
+        getDnsCache(hostname, options, cb);
+      } else {
+        cb(null, dns.getRecord(), 4);
       }
     }).catch(cb);
   }
@@ -245,11 +308,6 @@ function mapPartSizeInBytes(partSizeInMegabytes) {
   return partSizeInMegabytes*1000000;
 }
 
-exports.clear = () => {
-  imdsRegionCache = null;
-  imdsCredentialsCache = null;
-};
-
 exports.download = ({bucket, key, version}, {partSizeInMegabytes, concurrency, waitForWriteBeforeDownloladingNextPart, connectionTimeoutInMilliseconds}) => {
   if (concurrency < 1) {
     throw new Error('concurrency > 0');
@@ -268,34 +326,6 @@ exports.download = ({bucket, key, version}, {partSizeInMegabytes, concurrency, w
   const partsWaitingForWrite = {};
   const partsDownloading = {};
   let aborted = false;
-  let dnsCacheInterval = null;
-  let dnsCache = [];
-  let dnsCacheRingIndex = 0;
-
-  function populateDnsCache(hostname, cb) {
-    dns.resolve(hostname, 'A', (err, records) => { // A = IPv4
-      if (err) {
-        cb(err);
-      } else {
-        dnsCache = records;
-        emitter.emit('dns:updated', [...dnsCache]);
-        dnsCacheRingIndex = 0;
-        cb();
-      }
-    });
-  }
-
-  function lookup(hostname, options, cb) {
-    if (dnsCache.length === 0) {
-      cb(new Error('DNS cache empty'));
-    } else {
-      const cachedRecord = dnsCache[dnsCacheRingIndex++];
-      if (dnsCacheRingIndex >= dnsCache.length) {
-        dnsCacheRingIndex = 0;
-      }
-      cb(null, cachedRecord, 4); // 4 = IPv4
-    }
-  }
 
   function escapeKey(string) { // source https://github.com/aws/aws-sdk-js/blob/64eb16f8e9a835e41cf47d0efd7bf43dcde9dcb9/lib/util.js#L39-L49
     return encodeURIComponent(string)
@@ -334,10 +364,9 @@ exports.download = ({bucket, key, version}, {partSizeInMegabytes, concurrency, w
               service: 's3',
               region,
               signal: ac.signal,
-              lookup,
               timeout
             }, credentials);
-            retryrequest(https, options, {maxAttempts: 5}, (err, res, body) => {
+            retryrequest(https, options, undefined, {maxAttempts: 5}, (err, res, body) => {
               if (err) {
                 cb(err);
               } else {
@@ -383,10 +412,7 @@ exports.download = ({bucket, key, version}, {partSizeInMegabytes, concurrency, w
   }
 
   function stop() {
-    if (dnsCacheInterval !== null) {
-      clearInterval(dnsCacheInterval);
-      dnsCacheInterval = null;
-    }
+
   }
 
   function write(chunk, cb) {
@@ -486,80 +512,63 @@ exports.download = ({bucket, key, version}, {partSizeInMegabytes, concurrency, w
   }
 
   function start() {
-    getAwsRegion(timeout, (err, region) => {
+    emitter.emit('part:downloading', {partNo: 1});
+    const params = {
+      Bucket: bucket,
+      Key: key,
+      VersionId: version
+    };
+    if (partSizeInBytes === null) {
+      params.PartNumber = 1;
+    } else {
+      const endByte = partSizeInBytes-1; // inclusive
+      params.Range = `bytes=0-${endByte}`;
+    }
+    getObject(params, (err, data) => {
       if (err) {
         stream.destroy(err);
         stop();
       } else {
-        dnsCacheInterval = setInterval(() => {
-          populateDnsCache(getHostname(bucket, region), () => {});
-        }, 5000);
-        populateDnsCache(getHostname(bucket, region), (err) => {
-          if (err) {
-            stream.destroy(err);
-            stop();
+        if (partSizeInBytes === null) {
+          emitter.emit('part:downloaded', {partNo: 1});
+          if ('PartsCount' in data && data.PartsCount > 1) {
+            write(data.Body, () => {
+              emitter.emit('part:done', {partNo: 1});
+              lastWrittenPartNo = 1;
+              nextPartNo = 2;
+              partsToDownload = data.PartsCount;
+              startDownloadingParts();
+            });
           } else {
-            emitter.emit('part:downloading', {partNo: 1});
-            const params = {
-              Bucket: bucket,
-              Key: key,
-              VersionId: version
-            };
-            if (partSizeInBytes === null) {
-              params.PartNumber = 1;
-            } else {
-              const endByte = partSizeInBytes-1; // inclusive
-              params.Range = `bytes=0-${endByte}`;
-            }
-            getObject(params, (err, data) => {
-              if (err) {
-                stream.destroy(err);
-                stop();
-              } else {
-                if (partSizeInBytes === null) {
-                  emitter.emit('part:downloaded', {partNo: 1});
-                  if ('PartsCount' in data && data.PartsCount > 1) {
-                    write(data.Body, () => {
-                      emitter.emit('part:done', {partNo: 1});
-                      lastWrittenPartNo = 1;
-                      nextPartNo = 2;
-                      partsToDownload = data.PartsCount;
-                      startDownloadingParts();
-                    });
-                  } else {
-                    stream.end(data.Body, () => {
-                      emitter.emit('part:done', {partNo: 1});
-                      stop();
-                    });
-                  }
-                } else {
-                  const contentRange = parseContentRange(data.ContentRange);
-                  if (contentRange === undefined) {
-                    stream.destroy(new Error(`unexpected S3 content range: ${data.ContentRange}`));
-                    stop();
-                  } else {
-                    emitter.emit('part:downloaded', {partNo: 1});
-                    bytesToDownload = contentRange.length;
-                    if (bytesToDownload <= partSizeInBytes) {
-                      stream.end(data.Body, () => {
-                        emitter.emit('part:done', {partNo: 1});
-                        stop();
-                      });
-                    } else {
-                      write(data.Body, () => {
-                        emitter.emit('part:done', {partNo: 1});
-                        lastWrittenPartNo = 1;
-                        nextPartNo = 2;
-                        partsToDownload = Math.ceil(bytesToDownload/partSizeInBytes);
-                        startDownloadingParts();
-                      });
-                    }
-                  }
-                }
-              }
+            stream.end(data.Body, () => {
+              emitter.emit('part:done', {partNo: 1});
+              stop();
             });
           }
-        });
+        } else {
+          const contentRange = parseContentRange(data.ContentRange);
+          if (contentRange === undefined) {
+            stream.destroy(new Error(`unexpected S3 content range: ${data.ContentRange}`));
+            stop();
+          } else {
+            emitter.emit('part:downloaded', {partNo: 1});
+            bytesToDownload = contentRange.length;
+            if (bytesToDownload <= partSizeInBytes) {
+              stream.end(data.Body, () => {
+                emitter.emit('part:done', {partNo: 1});
+                stop();
+              });
+            } else {
+              write(data.Body, () => {
+                emitter.emit('part:done', {partNo: 1});
+                lastWrittenPartNo = 1;
+                nextPartNo = 2;
+                partsToDownload = Math.ceil(bytesToDownload/partSizeInBytes);
+                startDownloadingParts();
+              });
+            }
+          }
+        }
       }
     });
   }

@@ -3,7 +3,7 @@ const {pipeline} = require('node:stream');
 const fs = require('node:fs');
 const mockfs = require('mock-fs');
 const nock = require('nock');
-const {download, clear} = require('../index.js');
+const {download, clearCache} = require('../index.js');
 
 function nockPart(partSize, partNumber, parts, optionalTimeout) {
   const headers = {
@@ -102,7 +102,7 @@ describe('index', () => {
     afterEach(() => {
       mockfs.restore();
       nock.cleanAll();
-      clear();
+      clearCache();
     });
     describe('without partSizeInMegabytes', () => {
       describe('one part', () => {
@@ -1026,7 +1026,7 @@ describe('index', () => {
     afterEach(() => {
       mockfs.restore();
       nock.cleanAll();
-      clear();
+      clearCache();
     });
     it('happy', (done) => {
       const bytes = 8000000;
