@@ -320,7 +320,7 @@ function mapPartSizeInBytes(partSizeInMegabytes) {
   return partSizeInMegabytes*1000000;
 }
 
-exports.download = ({bucket, key, version}, {partSizeInMegabytes, concurrency, waitForWriteBeforeDownloladingNextPart, connectionTimeoutInMilliseconds}) => {
+exports.download = ({bucket, key, version}, {partSizeInMegabytes, concurrency, connectionTimeoutInMilliseconds}) => {
   if (concurrency < 1) {
     throw new Error('concurrency > 0');
   }
@@ -503,14 +503,9 @@ exports.download = ({bucket, key, version}, {partSizeInMegabytes, concurrency, w
           abortDownloads(err);
         } else {
           emitter.emit(EVENT_NAME_PART_DOWNLOADED, {partNo});
-          if (waitForWriteBeforeDownloladingNextPart !== true) {
-            process.nextTick(downloadNextPart);
-          }
           writePart(partNo, data.Body, () => {
             emitter.emit(EVENT_NAME_PART_DONE, {partNo});
-            if (waitForWriteBeforeDownloladingNextPart === true) {
-              process.nextTick(downloadNextPart);
-            }
+            process.nextTick(downloadNextPart);
           });
         }
       });

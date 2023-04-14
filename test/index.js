@@ -368,7 +368,7 @@ describe('index', () => {
             '/tmp': {
             }
           });
-          const d = download({bucket:'bucket', key: 'key', version: 'version'}, {concurrency: 4, waitForWriteBeforeDownloladingNextPart: true});
+          const d = download({bucket:'bucket', key: 'key', version: 'version'}, {concurrency: 4});
           let active = 0;
           let activeMax = 0;
           const downloadingPartNos = [];
@@ -417,7 +417,7 @@ describe('index', () => {
             '/tmp': {
             }
           });
-          const d = download({bucket:'bucket', key: 'key', version: 'version'}, {concurrency: 4, waitForWriteBeforeDownloladingNextPart: true});
+          const d = download({bucket:'bucket', key: 'key', version: 'version'}, {concurrency: 4});
           let active = 0;
           let activeMax = 0;
           const downloadingPartNos = [];
@@ -467,7 +467,7 @@ describe('index', () => {
             '/tmp': {
             }
           });
-          const d = download({bucket:'bucket', key: 'key', version: 'version'}, {concurrency: 4, waitForWriteBeforeDownloladingNextPart: true});
+          const d = download({bucket:'bucket', key: 'key', version: 'version'}, {concurrency: 4});
           let active = 0;
           let activeMax = 0;
           const downloadingPartNos = [];
@@ -679,7 +679,7 @@ describe('index', () => {
             '/tmp': {
             }
           });
-          const d = download({bucket:'bucket', key: 'key', version: 'version'}, {partSizeInMegabytes: 8, concurrency: 4, waitForWriteBeforeDownloladingNextPart: true});
+          const d = download({bucket:'bucket', key: 'key', version: 'version'}, {partSizeInMegabytes: 8, concurrency: 4});
           let active = 0;
           let activeMax = 0;
           const downloadingPartNos = [];
@@ -728,7 +728,7 @@ describe('index', () => {
             '/tmp': {
             }
           });
-          const d = download({bucket:'bucket', key: 'key', version: 'version'}, {partSizeInMegabytes: 8, concurrency: 4, waitForWriteBeforeDownloladingNextPart: true});
+          const d = download({bucket:'bucket', key: 'key', version: 'version'}, {partSizeInMegabytes: 8, concurrency: 4});
           let active = 0;
           let activeMax = 0;
           const downloadingPartNos = [];
@@ -778,7 +778,7 @@ describe('index', () => {
             '/tmp': {
             }
           });
-          const d = download({bucket:'bucket', key: 'key', version: 'version'}, {partSizeInMegabytes: 8, concurrency: 4, waitForWriteBeforeDownloladingNextPart: true});
+          const d = download({bucket:'bucket', key: 'key', version: 'version'}, {partSizeInMegabytes: 8, concurrency: 4});
           let active = 0;
           let activeMax = 0;
           const downloadingPartNos = [];
@@ -849,7 +849,7 @@ describe('index', () => {
             '/tmp': {
             }
           });
-          const d = download({bucket:'bucket', key: 'key', version: 'version'}, {partSizeInMegabytes: 8, concurrency: 4, waitForWriteBeforeDownloladingNextPart: true, connectionTimeoutInMilliseconds: 100});
+          const d = download({bucket:'bucket', key: 'key', version: 'version'}, {partSizeInMegabytes: 8, concurrency: 4, connectionTimeoutInMilliseconds: 100});
           pipeline(
             d.readStream(),
             fs.createWriteStream('/tmp/test'),
@@ -893,7 +893,7 @@ describe('index', () => {
             '/tmp': {
             }
           });
-          const d = download({bucket:'bucket', key: 'key', version: 'version'}, {partSizeInMegabytes: 8, concurrency: 4, waitForWriteBeforeDownloladingNextPart: true, connectionTimeoutInMilliseconds: 100});
+          const d = download({bucket:'bucket', key: 'key', version: 'version'}, {partSizeInMegabytes: 8, concurrency: 4, connectionTimeoutInMilliseconds: 100});
           pipeline(
             d.readStream(),
             fs.createWriteStream('/tmp/test'),
@@ -935,7 +935,7 @@ describe('index', () => {
             '/tmp': {
             }
           });
-          const d = download({bucket:'bucket', key: 'key', version: 'version'}, {partSizeInMegabytes: 8, concurrency: 4, waitForWriteBeforeDownloladingNextPart: true});
+          const d = download({bucket:'bucket', key: 'key', version: 'version'}, {partSizeInMegabytes: 8, concurrency: 4});
           pipeline(
             d.readStream(),
             fs.createWriteStream('/tmp/test'),
@@ -975,7 +975,7 @@ describe('index', () => {
             '/tmp': {
             }
           });
-          const d = download({bucket:'bucket', key: 'key', version: 'version'}, {partSizeInMegabytes: 8, concurrency: 4, waitForWriteBeforeDownloladingNextPart: true});
+          const d = download({bucket:'bucket', key: 'key', version: 'version'}, {partSizeInMegabytes: 8, concurrency: 4});
           pipeline(
             d.readStream(),
             fs.createWriteStream('/tmp/test'),
@@ -1017,7 +1017,7 @@ describe('index', () => {
             '/tmp': {
             }
           });
-          const d = download({bucket:'bucket', key: 'key', version: 'version'}, {partSizeInMegabytes: 8, concurrency: 4, waitForWriteBeforeDownloladingNextPart: true});
+          const d = download({bucket:'bucket', key: 'key', version: 'version'}, {partSizeInMegabytes: 8, concurrency: 4});
           pipeline(
             d.readStream(),
             fs.createWriteStream('/tmp/test'),
@@ -1057,7 +1057,7 @@ describe('index', () => {
             '/tmp': {
             }
           });
-          const d = download({bucket:'bucket', key: 'key', version: 'version'}, {partSizeInMegabytes: 8, concurrency: 4, waitForWriteBeforeDownloladingNextPart: true});
+          const d = download({bucket:'bucket', key: 'key', version: 'version'}, {partSizeInMegabytes: 8, concurrency: 4});
           pipeline(
             d.readStream(),
             fs.createWriteStream('/tmp/test'),
