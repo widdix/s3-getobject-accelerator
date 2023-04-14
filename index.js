@@ -10,11 +10,13 @@ const {parseString} = require('xml2js');
 
 const EVENT_NAME_PART_DOWNLOADING = 'part:downloading';
 const EVENT_NAME_PART_DOWNLOADED = 'part:downloaded';
+const EVENT_NAME_PART_WRITING = 'part:writing';
 const EVENT_NAME_PART_DONE = 'part:done';
 
 const EVENT_NAMES = [
   EVENT_NAME_PART_DOWNLOADING,
   EVENT_NAME_PART_DOWNLOADED,
+  EVENT_NAME_PART_WRITING,
   EVENT_NAME_PART_DONE
 ];
 exports.EVENT_NAMES = EVENT_NAMES;
@@ -455,6 +457,7 @@ exports.download = ({bucket, key, version}, {partSizeInMegabytes, concurrency, c
 
   function writePart(partNo, chunk, cb) {
     if (lastWrittenPartNo === (partNo-1)) {
+      emitter.emit(EVENT_NAME_PART_WRITING, {partNo});
       write(chunk, () => {
         lastWrittenPartNo = partNo;
         if (lastWrittenPartNo === partsToDownload) {
@@ -539,6 +542,7 @@ exports.download = ({bucket, key, version}, {partSizeInMegabytes, concurrency, c
         if (partSizeInBytes === null) {
           emitter.emit(EVENT_NAME_PART_DOWNLOADED, {partNo: 1});
           if ('PartsCount' in data && data.PartsCount > 1) {
+            emitter.emit(EVENT_NAME_PART_WRITING, {partNo: 1});
             write(data.Body, () => {
               emitter.emit(EVENT_NAME_PART_DONE, {partNo: 1});
               lastWrittenPartNo = 1;
@@ -547,6 +551,7 @@ exports.download = ({bucket, key, version}, {partSizeInMegabytes, concurrency, c
               startDownloadingParts();
             });
           } else {
+            emitter.emit(EVENT_NAME_PART_WRITING, {partNo: 1});
             stream.end(data.Body, () => {
               emitter.emit(EVENT_NAME_PART_DONE, {partNo: 1});
               stop();
@@ -561,11 +566,13 @@ exports.download = ({bucket, key, version}, {partSizeInMegabytes, concurrency, c
             emitter.emit(EVENT_NAME_PART_DOWNLOADED, {partNo: 1});
             bytesToDownload = contentRange.length;
             if (bytesToDownload <= partSizeInBytes) {
+              emitter.emit(EVENT_NAME_PART_WRITING, {partNo: 1});
               stream.end(data.Body, () => {
                 emitter.emit(EVENT_NAME_PART_DONE, {partNo: 1});
                 stop();
               });
             } else {
+              emitter.emit(EVENT_NAME_PART_WRITING, {partNo: 1});
               write(data.Body, () => {
                 emitter.emit(EVENT_NAME_PART_DONE, {partNo: 1});
                 lastWrittenPartNo = 1;
