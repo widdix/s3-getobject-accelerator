@@ -1,9 +1,10 @@
 const assert = require('assert');
 const {pipeline} = require('node:stream');
+const http = require('node:http');
 const fs = require('node:fs');
 const mockfs = require('mock-fs');
 const nock = require('nock');
-const {download, clearCache} = require('../index.js');
+const {download, clearCache, request} = require('../index.js');
 
 function nockPart(partSize, partNumber, parts, optionalTimeout) {
   const headers = {
@@ -86,6 +87,67 @@ function nockImds() {
 }
 
 describe('index', () => {
+  describe('request', () => {
+    before(() => {
+      nock.disableNetConnect();
+    });
+    after(() => {
+      nock.enableNetConnect();
+    });
+    afterEach(() => {
+    });
+    it('with content-length = 0', (done) => {
+      nock('http://localhost')
+        .get('/test')
+        .reply(204, '', {'Content-Type': 'application/text', 'Content-Length': '0'});
+      request(http, {
+        hostname: 'localhost',
+        method: 'GET',
+        path: '/test'
+      }, null, (err, res, body) => {
+        if (err) {
+          done(err);
+        } else {
+          assert.deepStrictEqual(body.toString('utf8'), '');
+          done();
+        }
+      });
+    });
+    it('with content-length > 0', (done) => {
+      nock('http://localhost')
+        .get('/test')
+        .reply(200, 'Hello world!', {'Content-Type': 'application/text', 'Content-Length': '12'});
+      request(http, {
+        hostname: 'localhost',
+        method: 'GET',
+        path: '/test'
+      }, null, (err, res, body) => {
+        if (err) {
+          done(err);
+        } else {
+          assert.deepStrictEqual(body.toString('utf8'), 'Hello world!');
+          done();
+        }
+      });
+    });
+    it('without content-length', (done) => {
+      nock('http://localhost')
+        .get('/test')
+        .reply(200, 'Hello world!', {'Content-Type': 'application/text'});
+      request(http, {
+        hostname: 'localhost',
+        method: 'GET',
+        path: '/test'
+      }, null, (err, res, body) => {
+        if (err) {
+          done(err);
+        } else {
+          assert.deepStrictEqual(body.toString('utf8'), 'Hello world!');
+          done();
+        }
+      });
+    });
+  });
   describe('credentials via environment variables', () => {
     before(() => {
       nock.disableNetConnect();

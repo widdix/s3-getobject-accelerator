@@ -8,6 +8,17 @@ const http = require('node:http');
 const aws4 = require('aws4');
 const {parseString} = require('xml2js');
 
+const EVENT_NAME_PART_DOWNLOADING = 'part:downloading';
+const EVENT_NAME_PART_DOWNLOADED = 'part:downloaded';
+const EVENT_NAME_PART_DONE = 'part:done';
+
+const EVENT_NAMES = [
+  EVENT_NAME_PART_DOWNLOADING,
+  EVENT_NAME_PART_DOWNLOADED,
+  EVENT_NAME_PART_DONE
+];
+exports.EVENT_NAMES = EVENT_NAMES;
+
 const RETRIABLE_NETWORK_ERROR_CODES = ['ECONNRESET', 'ENOTFOUND', 'ESOCKETTIMEDOUT', 'ETIMEDOUT', 'ECONNREFUSED', 'EHOSTUNREACH', 'EPIPE', 'EAI_AGAIN', 'EBUSY'];
 
 // From AWS docs: We make new credentials available at least five minutes before the expiration of the old credentials.
@@ -43,24 +54,25 @@ function parseContentRange(contentRange) {
 function request(nodemodule, options, body, cb) {
   options.lookup = getDnsCache;
   const req = nodemodule.request(options, (res) => {
-    let size = ('content-length' in res.headers) ? parseInt(res.headers['content-length'], 10) : undefined;
-    const chunks = (size !== undefined) ? undefined : [];
-    let body = (size !== undefined) ? Buffer.allocUnsafe(size) : undefined;
-    let bodyOffset = (size !== undefined) ? 0 : undefined;
+    let size = ('content-length' in res.headers) ? parseInt(res.headers['content-length'], 10) : 0;
+    const bodyChunks = ('content-length' in res.headers) ? null : [];
+    const bodyBuffer = ('content-length' in res.headers) ? Buffer.allocUnsafe(size) : null;
+    let bodyBufferOffset = 0;
     res.on('data', chunk => {
-      if (size === undefined) {
-        chunks.push(chunk);
+      if (bodyChunks !== null) {
+        bodyChunks.push(chunk);
+        size += chunk.length;
       } else {
-        chunk.copy(body, bodyOffset);
-        bodyOffset += chunk.length;
+        chunk.copy(bodyBuffer, bodyBufferOffset);
+        bodyBufferOffset += chunk.length;
       }
     });
     res.on('end', () => {
-      if (size === undefined) {
-        body = Buffer.concat(chunks);
-        size = body.length;
+      if (bodyChunks !== null) {
+        cb(null, res, Buffer.concat(bodyChunks));
+      } else {
+        cb(null, res, bodyBuffer);
       }
-      cb(null, res, body);
     });
   });
   req.once('error', (err) => {
@@ -485,17 +497,17 @@ exports.download = ({bucket, key, version}, {partSizeInMegabytes, concurrency, w
   function downloadNextPart() {
     if (nextPartNo <= partsToDownload) {
       const partNo = nextPartNo++;
-      emitter.emit('part:downloading', {partNo});
+      emitter.emit(EVENT_NAME_PART_DOWNLOADING, {partNo});
       downloadPart(partNo, (err, data) => {
         if (err) {
           abortDownloads(err);
         } else {
-          emitter.emit('part:downloaded', {partNo});
+          emitter.emit(EVENT_NAME_PART_DOWNLOADED, {partNo});
           if (waitForWriteBeforeDownloladingNextPart !== true) {
             process.nextTick(downloadNextPart);
           }
           writePart(partNo, data.Body, () => {
-            emitter.emit('part:done', {partNo});
+            emitter.emit(EVENT_NAME_PART_DONE, {partNo});
             if (waitForWriteBeforeDownloladingNextPart === true) {
               process.nextTick(downloadNextPart);
             }
@@ -512,7 +524,7 @@ exports.download = ({bucket, key, version}, {partSizeInMegabytes, concurrency, w
   }
 
   function start() {
-    emitter.emit('part:downloading', {partNo: 1});
+    emitter.emit(EVENT_NAME_PART_DOWNLOADING, {partNo: 1});
     const params = {
       Bucket: bucket,
       Key: key,
@@ -530,10 +542,10 @@ exports.download = ({bucket, key, version}, {partSizeInMegabytes, concurrency, w
         stop();
       } else {
         if (partSizeInBytes === null) {
-          emitter.emit('part:downloaded', {partNo: 1});
+          emitter.emit(EVENT_NAME_PART_DOWNLOADED, {partNo: 1});
           if ('PartsCount' in data && data.PartsCount > 1) {
             write(data.Body, () => {
-              emitter.emit('part:done', {partNo: 1});
+              emitter.emit(EVENT_NAME_PART_DONE, {partNo: 1});
               lastWrittenPartNo = 1;
               nextPartNo = 2;
               partsToDownload = data.PartsCount;
@@ -541,7 +553,7 @@ exports.download = ({bucket, key, version}, {partSizeInMegabytes, concurrency, w
             });
           } else {
             stream.end(data.Body, () => {
-              emitter.emit('part:done', {partNo: 1});
+              emitter.emit(EVENT_NAME_PART_DONE, {partNo: 1});
               stop();
             });
           }
@@ -551,16 +563,16 @@ exports.download = ({bucket, key, version}, {partSizeInMegabytes, concurrency, w
             stream.destroy(new Error(`unexpected S3 content range: ${data.ContentRange}`));
             stop();
           } else {
-            emitter.emit('part:downloaded', {partNo: 1});
+            emitter.emit(EVENT_NAME_PART_DOWNLOADED, {partNo: 1});
             bytesToDownload = contentRange.length;
             if (bytesToDownload <= partSizeInBytes) {
               stream.end(data.Body, () => {
-                emitter.emit('part:done', {partNo: 1});
+                emitter.emit(EVENT_NAME_PART_DONE, {partNo: 1});
                 stop();
               });
             } else {
               write(data.Body, () => {
-                emitter.emit('part:done', {partNo: 1});
+                emitter.emit(EVENT_NAME_PART_DONE, {partNo: 1});
                 lastWrittenPartNo = 1;
                 nextPartNo = 2;
                 partsToDownload = Math.ceil(bytesToDownload/partSizeInBytes);
