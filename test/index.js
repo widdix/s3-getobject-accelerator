@@ -1206,6 +1206,34 @@ describe('index', () => {
         });
       });
     });
+    describe('meta', () => {
+      it('happy', (done) => {
+        const bytes = 1000000;
+        nockPart(1000000, 1, 1, bytes);
+        mockfs({
+          '/tmp': {
+          }
+        });
+        const d = download({bucket:'bucket', key: 'key', version: 'version'}, {concurrency: 4});
+        d.meta((err, metadata) => {
+          if (err) {
+            done(err);
+          } else {
+            assert.deepStrictEqual({lengthInBytes: bytes}, metadata);
+            d.file('/tmp/test', (err) => {
+              if (err) {
+                done(err);
+              } else {
+                assert.ok(nock.isDone());
+                const {size} = fs.statSync('/tmp/test');
+                assert.deepStrictEqual(size, bytes);
+                done();
+              }
+            });
+          }
+        });
+      });
+    });
   });
   describe('credentials via IMDS', () => {
     before(() => {

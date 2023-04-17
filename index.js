@@ -323,6 +323,90 @@ function mapPartSizeInBytes(partSizeInMegabytes) {
   return partSizeInMegabytes*1000000;
 }
 
+function escapeKey(string) { // source https://github.com/aws/aws-sdk-js/blob/64eb16f8e9a835e41cf47d0efd7bf43dcde9dcb9/lib/util.js#L39-L49
+  return encodeURIComponent(string)
+    .replace(/[^A-Za-z0-9_.~\-%]+/g, escape)
+    .replace(/[*]/g, function(ch) { // AWS percent-encodes some extra non-standard characters in a URI
+      return '%' + ch.charCodeAt(0).toString(16).toUpperCase();
+    });
+}
+
+function getObject({Bucket, Key, VersionId, PartNumber, Range}, timeout, cb) {
+  const ac = new AbortController();
+  const qs = {};
+  const headers = {};
+  if (VersionId !== undefined && VersionId !== null) {
+    qs.versionId = VersionId;
+  }
+  if (PartNumber !== undefined && PartNumber !== null) {
+    qs.partNumber = PartNumber;
+  }
+  if (Range !== undefined && Range !== null) {
+    headers.Range = Range;
+  }
+  getAwsRegion(timeout, (err, region) => {
+    if (err) {
+      cb(err);
+    } else {
+      getAwsCredentials(timeout, (err, credentials) => {
+        if (err) {
+          cb(err);
+        } else {
+          const options = aws4.sign({
+            hostname: getHostname(Bucket, region),
+            method: 'GET',
+            path: `/${escapeKey(Key)}?${querystring.stringify(qs)}`,
+            headers,
+            service: 's3',
+            region,
+            signal: ac.signal,
+            timeout
+          }, credentials);
+          retryrequest(https, options, undefined, {maxAttempts: 5}, (err, res, body) => {
+            if (err) {
+              cb(err);
+            } else {
+              if (res.statusCode === 206) {
+                const data = {
+                  Body: body,
+                  ContentLength: body.length
+                };
+                if ('x-amz-mp-parts-count' in res.headers) {
+                  data.PartsCount = parseInt(res.headers['x-amz-mp-parts-count'], 10);
+                }
+                if ('content-range' in res.headers) {
+                  data.ContentRange = res.headers['content-range'];
+                }
+                cb(null, data);
+              } else {
+                if (res.headers['content-type'] === 'application/xml') {
+                  parseString(body.toString('utf8'), {explicitArray: false}, function (err, result) {
+                    if (err) {
+                      cb(err);
+                    } else {
+                      if (result.Error && result.Error.Code && result.Error.Message) {
+                        const e = new Error(`${result.Error.Code}: ${result.Error.Message}`);
+                        e.code = result.Error.Code;
+                        e.statusCode = res.statusCode;
+                        cb(e);
+                      } else {
+                        cb(new Error(`unexpected S3 XML response (${res.statusCode}):\n${body.toString('utf8')}`));
+                      }
+                    }
+                  });
+                } else {
+                  cb(new Error(`unexpected S3 response (${res.statusCode}, ${res.headers['content-type']})`));
+                }
+              }
+            }
+          });
+        }
+      });
+    }
+  });
+  return ac;
+}
+
 exports.download = ({bucket, key, version}, {partSizeInMegabytes, concurrency, connectionTimeoutInMilliseconds}) => {
   if (concurrency < 1) {
     throw new Error('concurrency > 0');
@@ -341,90 +425,6 @@ exports.download = ({bucket, key, version}, {partSizeInMegabytes, concurrency, c
   const partsWaitingForWrite = {};
   const partsDownloading = {};
   let aborted = false;
-
-  function escapeKey(string) { // source https://github.com/aws/aws-sdk-js/blob/64eb16f8e9a835e41cf47d0efd7bf43dcde9dcb9/lib/util.js#L39-L49
-    return encodeURIComponent(string)
-      .replace(/[^A-Za-z0-9_.~\-%]+/g, escape)
-      .replace(/[*]/g, function(ch) { // AWS percent-encodes some extra non-standard characters in a URI
-        return '%' + ch.charCodeAt(0).toString(16).toUpperCase();
-      });
-  }
-
-  function getObject({Bucket, Key, VersionId, PartNumber, Range}, cb) {
-    const ac = new AbortController();
-    const qs = {};
-    const headers = {};
-    if (VersionId !== undefined && VersionId !== null) {
-      qs.versionId = VersionId;
-    }
-    if (PartNumber !== undefined && PartNumber !== null) {
-      qs.partNumber = PartNumber;
-    }
-    if (Range !== undefined && Range !== null) {
-      headers.Range = Range;
-    }
-    getAwsRegion(timeout, (err, region) => {
-      if (err) {
-        cb(err);
-      } else {
-        getAwsCredentials(timeout, (err, credentials) => {
-          if (err) {
-            cb(err);
-          } else {
-            const options = aws4.sign({
-              hostname: getHostname(Bucket, region),
-              method: 'GET',
-              path: `/${escapeKey(Key)}?${querystring.stringify(qs)}`,
-              headers,
-              service: 's3',
-              region,
-              signal: ac.signal,
-              timeout
-            }, credentials);
-            retryrequest(https, options, undefined, {maxAttempts: 5}, (err, res, body) => {
-              if (err) {
-                cb(err);
-              } else {
-                if (res.statusCode === 206) {
-                  const data = {
-                    Body: body,
-                    ContentLength: body.length
-                  };
-                  if ('x-amz-mp-parts-count' in res.headers) {
-                    data.PartsCount = parseInt(res.headers['x-amz-mp-parts-count'], 10);
-                  }
-                  if ('content-range' in res.headers) {
-                    data.ContentRange = res.headers['content-range'];
-                  }
-                  cb(null, data);
-                } else {
-                  if (res.headers['content-type'] === 'application/xml') {
-                    parseString(body.toString('utf8'), {explicitArray: false}, function (err, result) {
-                      if (err) {
-                        cb(err);
-                      } else {
-                        if (result.Error && result.Error.Code && result.Error.Message) {
-                          const e = new Error(`${result.Error.Code}: ${result.Error.Message}`);
-                          e.code = result.Error.Code;
-                          e.statusCode = res.statusCode;
-                          cb(e);
-                        } else {
-                          cb(new Error(`unexpected S3 XML response (${res.statusCode}):\n${body.toString('utf8')}`));
-                        }
-                      }
-                    });
-                  } else {
-                    cb(new Error(`unexpected S3 response (${res.statusCode}, ${res.headers['content-type']})`));
-                  }
-                }
-              }
-            });
-          }
-        });
-      }
-    });
-    return ac;
-  }
 
   function write(chunk, cb) {
     if (!stream.write(chunk)) {
@@ -481,7 +481,7 @@ exports.download = ({bucket, key, version}, {partSizeInMegabytes, concurrency, c
       const endByte = Math.min(startByte+partSizeInBytes-1, bytesToDownload-1); // inclusive
       params.Range = `bytes=${startByte}-${endByte}`;
     }
-    const req = getObject(params, (err, data) => {
+    const req = getObject(params, timeout, (err, data) => {
       delete partsDownloading[partNo];
       if (err) {
         cb(err);
@@ -516,66 +516,89 @@ exports.download = ({bucket, key, version}, {partSizeInMegabytes, concurrency, c
     }
   }
 
+  let metadataCache = null;
+
+  function meta(cb) {
+    if (metadataCache === null) {
+      metadataCache = new Promise((resolve, reject) => {
+        const params = {
+          Bucket: bucket,
+          Key: key,
+          VersionId: version
+        };
+        if (partSizeInBytes === null) {
+          params.PartNumber = 1;
+        } else {
+          const endByte = partSizeInBytes-1; // inclusive
+          params.Range = `bytes=0-${endByte}`;
+        }
+        partsDownloading[1] = getObject(params, timeout, (err, data) => {
+          delete partsDownloading[1];
+          if (err) {
+            reject(err);
+          } else {
+            const contentRange = parseContentRange(data.ContentRange);
+            if (contentRange === undefined) {
+              reject(new Error(`unexpected S3 content range: ${data.ContentRange}`));
+            } else {
+              const metadata = {
+                lengthInBytes: contentRange.length
+              };
+              if ('PartsCount' in data) {
+                metadata.parts = data.PartsCount;
+              }
+              resolve({metadata, body: data.Body});
+            }
+          }
+        });
+      });
+    }
+    metadataCache.then(({metadata, body}) => {
+      cb(null, metadata, body);
+    }).catch(cb);
+  }
+
   function start() {
     emitter.emit(EVENT_NAME_PART_DOWNLOADING, {partNo: 1});
-    const params = {
-      Bucket: bucket,
-      Key: key,
-      VersionId: version
-    };
-    if (partSizeInBytes === null) {
-      params.PartNumber = 1;
-    } else {
-      const endByte = partSizeInBytes-1; // inclusive
-      params.Range = `bytes=0-${endByte}`;
-    }
-    partsDownloading[1] = getObject(params, (err, data) => {
-      delete partsDownloading[1];
+    meta((err, metadata, body) => {
       if (err) {
         stream.destroy(err);
       } else {
-        const contentRange = parseContentRange(data.ContentRange);
-        if (contentRange === undefined) {
-          stream.destroy(new Error(`unexpected S3 content range: ${data.ContentRange}`));
-        } else {
-          emitter.emit(EVENT_NAME_OBJECT_DOWNLOADING, {
-            lengthInBytes: contentRange.length
-          });
-          if (partSizeInBytes === null) {
-            emitter.emit(EVENT_NAME_PART_DOWNLOADED, {partNo: 1});
-            if ('PartsCount' in data && data.PartsCount > 1) {
-              emitter.emit(EVENT_NAME_PART_WRITING, {partNo: 1});
-              write(data.Body, () => {
-                emitter.emit(EVENT_NAME_PART_DONE, {partNo: 1});
-                lastWrittenPartNo = 1;
-                nextPartNo = 2;
-                partsToDownload = data.PartsCount;
-                startDownloadingParts();
-              });
-            } else {
-              emitter.emit(EVENT_NAME_PART_WRITING, {partNo: 1});
-              stream.end(data.Body, () => {
-                emitter.emit(EVENT_NAME_PART_DONE, {partNo: 1});
-              });
-            }
+        emitter.emit(EVENT_NAME_OBJECT_DOWNLOADING, metadata);
+        if (partSizeInBytes === null) {
+          emitter.emit(EVENT_NAME_PART_DOWNLOADED, {partNo: 1});
+          if ('parts' in metadata && metadata.parts > 1) {
+            emitter.emit(EVENT_NAME_PART_WRITING, {partNo: 1});
+            write(body, () => {
+              emitter.emit(EVENT_NAME_PART_DONE, {partNo: 1});
+              lastWrittenPartNo = 1;
+              nextPartNo = 2;
+              partsToDownload = metadata.parts;
+              startDownloadingParts();
+            });
           } else {
-            emitter.emit(EVENT_NAME_PART_DOWNLOADED, {partNo: 1});
-            bytesToDownload = contentRange.length;
-            if (bytesToDownload <= partSizeInBytes) {
-              emitter.emit(EVENT_NAME_PART_WRITING, {partNo: 1});
-              stream.end(data.Body, () => {
-                emitter.emit(EVENT_NAME_PART_DONE, {partNo: 1});
-              });
-            } else {
-              emitter.emit(EVENT_NAME_PART_WRITING, {partNo: 1});
-              write(data.Body, () => {
-                emitter.emit(EVENT_NAME_PART_DONE, {partNo: 1});
-                lastWrittenPartNo = 1;
-                nextPartNo = 2;
-                partsToDownload = Math.ceil(bytesToDownload/partSizeInBytes);
-                startDownloadingParts();
-              });
-            }
+            emitter.emit(EVENT_NAME_PART_WRITING, {partNo: 1});
+            stream.end(body, () => {
+              emitter.emit(EVENT_NAME_PART_DONE, {partNo: 1});
+            });
+          }
+        } else {
+          emitter.emit(EVENT_NAME_PART_DOWNLOADED, {partNo: 1});
+          bytesToDownload = metadata.lengthInBytes;
+          if (bytesToDownload <= partSizeInBytes) {
+            emitter.emit(EVENT_NAME_PART_WRITING, {partNo: 1});
+            stream.end(body, () => {
+              emitter.emit(EVENT_NAME_PART_DONE, {partNo: 1});
+            });
+          } else {
+            emitter.emit(EVENT_NAME_PART_WRITING, {partNo: 1});
+            write(body, () => {
+              emitter.emit(EVENT_NAME_PART_DONE, {partNo: 1});
+              lastWrittenPartNo = 1;
+              nextPartNo = 2;
+              partsToDownload = Math.ceil(bytesToDownload/partSizeInBytes);
+              startDownloadingParts();
+            });
           }
         }
       }
@@ -583,6 +606,15 @@ exports.download = ({bucket, key, version}, {partSizeInMegabytes, concurrency, c
   }
 
   return {
+    meta: (cb) => {
+      meta((err, metadata) => {
+        if (err) {
+          cb(err);
+        } else {
+          cb(null, metadata);
+        }
+      });
+    },
     readStream: () => {
       if (started === false)  {
         stream = new PassThrough();
