@@ -342,7 +342,7 @@ describe('index', () => {
               (err) => {
                 if (err) {
                   assert.ok(nock.isDone());
-                  assert.deepStrictEqual(err.code, 's3-getobject-accelerator:aborted');
+                  assert.deepStrictEqual(err.message, 'aborted');
                   done();
                 } else {
                   assert.fail();
@@ -398,7 +398,7 @@ describe('index', () => {
             });
             const d = download({bucket:'bucket', key: 'key', version: 'version'}, {concurrency: 4});
             setTimeout(() => {
-              d.abort();
+              d.abort(new Error('TEST'));
             }, 150);
             pipeline(
               d.readStream(),
@@ -406,7 +406,7 @@ describe('index', () => {
               (err) => {
                 if (err) {
                   assert.ok(nock.isDone());
-                  assert.deepStrictEqual(err.code, 's3-getobject-accelerator:aborted');
+                  assert.deepStrictEqual(err.message, 'TEST');
                   done();
                 } else {
                   assert.fail();
@@ -640,7 +640,7 @@ describe('index', () => {
               (err) => {
                 if (err) {
                   assert.ok(nock.isDone());
-                  assert.deepStrictEqual(err.code, 's3-getobject-accelerator:aborted');
+                  assert.deepStrictEqual(err.message, 'aborted');
                   done();
                 } else {
                   assert.fail();
@@ -1198,7 +1198,7 @@ describe('index', () => {
         d.file('/tmp/test', (err) => {
           if (err) {
             assert.ok(nock.isDone());
-            assert.deepStrictEqual(err.code, 's3-getobject-accelerator:aborted');
+            assert.deepStrictEqual(err.message, 'aborted');
             done();
           } else {
             assert.fail();

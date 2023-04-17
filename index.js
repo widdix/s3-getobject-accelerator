@@ -609,9 +609,10 @@ exports.download = ({bucket, key, version}, {partSizeInMegabytes, concurrency, c
         }
       });
     },
-    abort: () => {
-      const err = new Error('aborter');
-      err.code = 's3-getobject-accelerator:aborted';
+    abort: (err) => {
+      if (err === undefined || err === null) {
+        err = new Error('aborted');
+      }
       abortDownloads(err);
     },
     partsDownloading: () => Object.keys(partsDownloading).length,

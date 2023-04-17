@@ -40,8 +40,7 @@ const d = download({bucket: 'bucket', key: 'key', version: 'optional version'}, 
 d.on('object:downloading', ({lengthInBytes}) => {
   console.log('start downloading object', lengthInBytes);
   if (lengthInBytes > 1000000000) {
-    console.error('too big');
-    d.abort();
+    d.abort(new Error('too big'));
   }
 });
 d.on('part:downloading', ({partNo}) => {
@@ -83,7 +82,7 @@ download(
 ) : {
   readStream(),                         // ReadStream (see https://nodejs.org/api/stream.html#class-streamreadable)
   file(path, cb),
-  abort(),
+  abort([err]),
   partsDownloading(),                   // number
   addListener(eventName, listener),     // see https://nodejs.org/api/events.html#emitteraddlistenereventname-listener
   off(eventName, listener),             // see https://nodejs.org/api/events.html#emitteroffeventname-listener
