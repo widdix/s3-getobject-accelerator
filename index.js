@@ -8,6 +8,7 @@ const http = require('node:http');
 const aws4 = require('aws4');
 const {parseString} = require('xml2js');
 
+const EVENT_NAME_OBJECT_DOWNLOADING  = 'object:downloading';
 const EVENT_NAME_PART_DOWNLOADING = 'part:downloading';
 const EVENT_NAME_PART_DOWNLOADED = 'part:downloaded';
 const EVENT_NAME_PART_WRITING = 'part:writing';
@@ -425,10 +426,6 @@ exports.download = ({bucket, key, version}, {partSizeInMegabytes, concurrency, c
     return ac;
   }
 
-  function stop() {
-
-  }
-
   function write(chunk, cb) {
     if (!stream.write(chunk)) {
       stream.once('drain', cb);
@@ -442,7 +439,6 @@ exports.download = ({bucket, key, version}, {partSizeInMegabytes, concurrency, c
       aborted = true;
       Object.values(partsDownloading).forEach(req => req.abort());
       stream.destroy(err);
-      stop();
     }
   }
 
@@ -462,7 +458,6 @@ exports.download = ({bucket, key, version}, {partSizeInMegabytes, concurrency, c
         lastWrittenPartNo = partNo;
         if (lastWrittenPartNo === partsToDownload) {
           stream.end(cb);
-          stop();
         } else {
           process.nextTick(drainWriteQueue);
           cb();
@@ -534,34 +529,35 @@ exports.download = ({bucket, key, version}, {partSizeInMegabytes, concurrency, c
       const endByte = partSizeInBytes-1; // inclusive
       params.Range = `bytes=0-${endByte}`;
     }
-    getObject(params, (err, data) => {
+    partsDownloading[1] = getObject(params, (err, data) => {
+      delete partsDownloading[1];
       if (err) {
         stream.destroy(err);
-        stop();
       } else {
-        if (partSizeInBytes === null) {
-          emitter.emit(EVENT_NAME_PART_DOWNLOADED, {partNo: 1});
-          if ('PartsCount' in data && data.PartsCount > 1) {
-            emitter.emit(EVENT_NAME_PART_WRITING, {partNo: 1});
-            write(data.Body, () => {
-              emitter.emit(EVENT_NAME_PART_DONE, {partNo: 1});
-              lastWrittenPartNo = 1;
-              nextPartNo = 2;
-              partsToDownload = data.PartsCount;
-              startDownloadingParts();
-            });
-          } else {
-            emitter.emit(EVENT_NAME_PART_WRITING, {partNo: 1});
-            stream.end(data.Body, () => {
-              emitter.emit(EVENT_NAME_PART_DONE, {partNo: 1});
-              stop();
-            });
-          }
+        const contentRange = parseContentRange(data.ContentRange);
+        if (contentRange === undefined) {
+          stream.destroy(new Error(`unexpected S3 content range: ${data.ContentRange}`));
         } else {
-          const contentRange = parseContentRange(data.ContentRange);
-          if (contentRange === undefined) {
-            stream.destroy(new Error(`unexpected S3 content range: ${data.ContentRange}`));
-            stop();
+          emitter.emit(EVENT_NAME_OBJECT_DOWNLOADING, {
+            lengthInBytes: contentRange.length
+          });
+          if (partSizeInBytes === null) {
+            emitter.emit(EVENT_NAME_PART_DOWNLOADED, {partNo: 1});
+            if ('PartsCount' in data && data.PartsCount > 1) {
+              emitter.emit(EVENT_NAME_PART_WRITING, {partNo: 1});
+              write(data.Body, () => {
+                emitter.emit(EVENT_NAME_PART_DONE, {partNo: 1});
+                lastWrittenPartNo = 1;
+                nextPartNo = 2;
+                partsToDownload = data.PartsCount;
+                startDownloadingParts();
+              });
+            } else {
+              emitter.emit(EVENT_NAME_PART_WRITING, {partNo: 1});
+              stream.end(data.Body, () => {
+                emitter.emit(EVENT_NAME_PART_DONE, {partNo: 1});
+              });
+            }
           } else {
             emitter.emit(EVENT_NAME_PART_DOWNLOADED, {partNo: 1});
             bytesToDownload = contentRange.length;
@@ -569,7 +565,6 @@ exports.download = ({bucket, key, version}, {partSizeInMegabytes, concurrency, c
               emitter.emit(EVENT_NAME_PART_WRITING, {partNo: 1});
               stream.end(data.Body, () => {
                 emitter.emit(EVENT_NAME_PART_DONE, {partNo: 1});
-                stop();
               });
             } else {
               emitter.emit(EVENT_NAME_PART_WRITING, {partNo: 1});
@@ -600,8 +595,24 @@ exports.download = ({bucket, key, version}, {partSizeInMegabytes, concurrency, c
         stream = createWriteStream(path);
         start();
       }
-      stream.once('end', () => cb());
-      stream.once('error', cb);
+      let calledback = false;
+      stream.once('close', () => {
+        if (calledback === false) {
+          calledback = true;
+          cb();
+        }
+      });
+      stream.once('error', (err) => {
+        if (calledback === false) {
+          calledback = true;
+          cb(err);
+        }
+      });
+    },
+    abort: () => {
+      const err = new Error('aborter');
+      err.code = 's3-getobject-accelerator:aborted';
+      abortDownloads(err);
     },
     partsDownloading: () => Object.keys(partsDownloading).length,
     addListener: (eventName, listener) => emitter.addListener(eventName, listener),

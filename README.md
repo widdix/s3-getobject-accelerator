@@ -37,12 +37,21 @@ const {createWriteStream} = require('node:fs');
 const {download} = require('s3-getobject-accelerator');
 
 const d = download({bucket: 'bucket', key: 'key', version: 'optional version'}, {partSizeInMegabytes: 8, concurrency: 4});
-
+d.on('object:downloading', ({lengthInBytes}) => {
+  console.log('start downloading object', lengthInBytes);
+  if (lengthInBytes > 1000000000) {
+    console.error('too big');
+    d.abort();
+  }
+});
 d.on('part:downloading', ({partNo}) => {
   console.log('start downloading part', partNo);
 });
 d.on('part:downloaded', ({partNo}) => {
   console.log('part downloaded, write to disk next in correct order', partNo);
+});
+d.on('part:writing', ({partNo}) => {
+  console.log('start writing part to disk', partNo);
 });
 d.on('part:done', ({partNo}) => {
   console.log('part written to disk', partNo);
@@ -73,7 +82,8 @@ download(
   }
 ) : {
   readStream(),                         // ReadStream (see https://nodejs.org/api/stream.html#class-streamreadable)
-  file(path),
+  file(path, cb),
+  abort(),
   partsDownloading(),                   // number
   addListener(eventName, listener),     // see https://nodejs.org/api/events.html#emitteraddlistenereventname-listener
   off(eventName, listener),             // see https://nodejs.org/api/events.html#emitteroffeventname-listener
