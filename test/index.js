@@ -294,6 +294,7 @@ describe('index', () => {
                 (err) => {
                   if (err) {
                     assert.ok(nock.isDone());
+                    assert.deepStrictEqual(err.statusCode, 403);
                     assert.deepStrictEqual(err.message, 'unexpected S3 response (403, undefined)');
                     done();
                   } else {
@@ -379,6 +380,7 @@ describe('index', () => {
               (err) => {
                 if (err) {
                   assert.ok(nock.isDone());
+                  assert.deepStrictEqual(err.statusCode, 403);
                   assert.deepStrictEqual(err.message, 'unexpected S3 response (403, undefined)');
                   done();
                 } else {
@@ -593,6 +595,7 @@ describe('index', () => {
               (err) => {
                 if (err) {
                   assert.ok(nock.isDone());
+                  assert.deepStrictEqual(err.statusCode, 403);
                   assert.deepStrictEqual(err.message, 'unexpected S3 response (403, undefined)');
                   done();
                 } else {
@@ -723,6 +726,7 @@ describe('index', () => {
               (err) => {
                 if (err) {
                   assert.ok(nock.isDone());
+                  assert.deepStrictEqual(err.statusCode, 403);
                   assert.deepStrictEqual(err.message, 'unexpected S3 response (403, undefined)');
                   done();
                 } else {
@@ -1154,6 +1158,7 @@ describe('index', () => {
               (err) => {
                 if (err) {
                   assert.ok(nock.isDone());
+                  assert.deepStrictEqual(err.statusCode, 500);
                   assert.deepStrictEqual(err.message, 'status code: 500, content-type: undefined');
                   done();
                 } else {

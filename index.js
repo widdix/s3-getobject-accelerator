@@ -123,9 +123,13 @@ function retryrequest(nodemodule, requestOptions, body, retryOptions, cb) {
       } else {
         if (res.statusCode == 429 || (res.statusCode >= 500 && res.statusCode <= 599)) {
           if (res.headers['content-type'] === 'application/xml') {
-            retry(new Error(`status code: ${res.statusCode}\n${body.toString('utf8')}`));
+            const err = new Error(`status code: ${res.statusCode}\n${body.toString('utf8')}`);
+            err.statusCode = res.statusCode;
+            retry(err);
           } else {
-            retry(new Error(`status code: ${res.statusCode}, content-type: ${res.headers['content-type']}`));
+            const err = new Error(`status code: ${res.statusCode}, content-type: ${res.headers['content-type']}`);
+            err.statusCode = res.statusCode;
+            retry(err);
           }
         } else {
           cb(null, res, body);
@@ -152,7 +156,9 @@ function imdsRequest(method, path, headers, timeout, cb) {
       if (res.statusCode === 200) {
         cb(null, body.toString('utf8'));
       } else {
-        cb(new Error(`unexpected IMDS status code: ${res.statusCode}.\n${body.toString('utf8')}`));
+        const err = new Error(`unexpected IMDS status code: ${res.statusCode}.\n${body.toString('utf8')}`);
+        err.statusCode = res.statusCode;
+        cb(err);
       }
     }
   });
@@ -390,12 +396,16 @@ function getObject({Bucket, Key, VersionId, PartNumber, Range}, timeout, cb) {
                         e.statusCode = res.statusCode;
                         cb(e);
                       } else {
-                        cb(new Error(`unexpected S3 XML response (${res.statusCode}):\n${body.toString('utf8')}`));
+                        const err = new Error(`unexpected S3 XML response (${res.statusCode}):\n${body.toString('utf8')}`);
+                        err.statusCode = res.statusCode;
+                        cb(err);
                       }
                     }
                   });
                 } else {
-                  cb(new Error(`unexpected S3 response (${res.statusCode}, ${res.headers['content-type']})`));
+                  const err = new Error(`unexpected S3 response (${res.statusCode}, ${res.headers['content-type']})`);
+                  err.statusCode = res.statusCode;
+                  cb(err);
                 }
               }
             }
