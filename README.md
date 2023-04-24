@@ -79,30 +79,30 @@ d.meta((err, metadata) => {
 ### download(s3source, options)
 
 * `s3source`
-  * `bucket` <string>
-  * `key` <string>
-  * `version` <string> (optional)
+  * `bucket` `<string>`
+  * `key` `<string>`
+  * `version` `<string>` (optional)
 * `options`
-  * `partSizeInMegabytes` <number> (optional)
-  * `concurrency` <number>
-  * `connectionTimeoutInMilliseconds` <number>
+  * `partSizeInMegabytes` `<number>` (optional)
+  * `concurrency` `<number>`
+  * `connectionTimeoutInMilliseconds` `<number>`
 * Returns:
-  * `meta(cb)` <Function> Get meta-data before starting the download (downloads the first part and keeps the body in memory until download starts)
-    * `cb(err, metadata)` <Function>
-      * `err` <Error>
+  * `meta(cb)` `<Function>` Get meta-data before starting the download (downloads the first part and keeps the body in memory until download starts)
+    * `cb(err, metadata)` `<Function>`
+      * `err` `<Error>`
       * `metadata`
-        * `lengthInBytes` <number>
-        * `parts` <number> Number of parts available (optional)
-  * `readStream()` <Function> Start download
+        * `lengthInBytes` `<number>`
+        * `parts` `<number>` Number of parts available (optional)
+  * `readStream()` `<Function>` Start download
     * Returns: [ReadStream](https://nodejs.org/api/stream.html#class-streamreadable)
-  * `file(path, cb)` <Function> Start download
-    * `path` <string>
-    * `cb(err)` <Function>
-      * `err` <Error>
-  * `abort([err])` <Function> Abort download
-    * `err` <Error>
-  * `partsDownloading()` <Function> Number of parts downloading at the moment
-    * Returns <number>
+  * `file(path, cb)` `<Function>` Start download
+    * `path` `<string>`
+    * `cb(err)` `<Function>`
+      * `err` `<Error>`
+  * `abort([err])` `<Function>` Abort download
+    * `err` `<Error>`
+  * `partsDownloading()` `<Function>` Number of parts downloading at the moment
+    * Returns `<number>`
   * `addListener(eventName, listener)` See https://nodejs.org/api/events.html#emitteraddlistenereventname-listener
   * `off(eventName, listener)` See https://nodejs.org/api/events.html#emitteroffeventname-listener
   * `on(eventName, listener)` See https://nodejs.org/api/events.html#emitteroneventname-listener
@@ -123,5 +123,4 @@ AWS credentials & region is fetched in the following order:
 ## Considerations
 
 * Typical sizes `partSizeInMegabytes` are 8 MB or 16 MB. If objects are uploaded using a multipart upload, it’s a good practice to download them in the same part sizes ( do not specify `partSizeInMegabytes`), or at least aligned to part boundaries, for best performance (see https://docs.aws.amazon.com/whitepapers/latest/s3-optimizing-performance-best-practices/use-byte-range-fetches.html).
-* The default S3 client sets `maxSockets` to 50. Therefore, a `concurrency` > 50 requires changes to the S3 client configuration (see https://docs.aws.amazon.com/sdk-for-javascript/v2/developer-guide/node-configuring-maxsockets.html).
 * Keep in mind that you pay per GET request to Amazon S3. The smaller the parts, the more expensive a download is.
