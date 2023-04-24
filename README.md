@@ -78,11 +78,11 @@ d.meta((err, metadata) => {
 
 ### download(s3source, options)
 
-* `s3source`
+* `s3source` `<Object>`
   * `bucket` `<string>`
   * `key` `<string>`
   * `version` `<string>` (optional)
-* `options`
+* `options` `<Object>`
   * `partSizeInMegabytes` `<number>` (optional)
   * `concurrency` `<number>`
   * `connectionTimeoutInMilliseconds` `<number>`
@@ -90,7 +90,7 @@ d.meta((err, metadata) => {
   * `meta(cb)` `<Function>` Get meta-data before starting the download (downloads the first part and keeps the body in memory until download starts)
     * `cb(err, metadata)` `<Function>`
       * `err` `<Error>`
-      * `metadata`
+      * `metadata` `<Object>`
         * `lengthInBytes` `<number>`
         * `parts` `<number>` Number of parts available (optional)
   * `readStream()` `<Function>` Start download
