@@ -24,16 +24,18 @@ exports.EVENT_NAMES = EVENT_NAMES;
 
 const RETRIABLE_NETWORK_ERROR_CODES = ['ECONNRESET', 'ENOTFOUND', 'ESOCKETTIMEDOUT', 'ETIMEDOUT', 'ECONNREFUSED', 'EHOSTUNREACH', 'EPIPE', 'EAI_AGAIN', 'EBUSY'];
 
-// From AWS docs: We make new credentials available at least five minutes before the expiration of the old credentials.
-const AWS_CREDENTIALS_MAX_AGE_IN_MILLISECONDS = 4*60*1000;
-
+const AWS_CREDENTIALS_MAX_AGE_IN_MILLISECONDS = 4*60*1000; // From AWS docs: We make new credentials available at least five minutes before the expiration of the old credentials.
 const DNS_RECORD_MAX_AGE_IN_MILLISECONDS = 10*1000;
+const IMDS_TOKEN_TTL_IN_SECONDS = 60*10;
+const IMDS_TOKEN_MAX_AGE_IN_MILLISECONDS = (IMDS_TOKEN_TTL_IN_SECONDS-60)*1000;
 
+let imdsTokenCache = undefined;
 let imdsRegionCache = undefined;
 let imdsCredentialsCache = undefined;
 let dnsCache = {};
 
 exports.clearCache = () => {
+  imdsTokenCache = undefined;
   imdsRegionCache = undefined;
   imdsCredentialsCache = undefined;
   dnsCache = {};
@@ -57,6 +59,7 @@ function parseContentRange(contentRange) {
 function request(nodemodule, options, body, cb) {
   options.lookup = getDnsCache;
   const req = nodemodule.request(options, (res) => {
+    //res.setTimeout(); // FIXME
     let size = ('content-length' in res.headers) ? parseInt(res.headers['content-length'], 10) : 0;
     const bodyChunks = ('content-length' in res.headers) ? null : [];
     const bodyBuffer = ('content-length' in res.headers) ? Buffer.allocUnsafe(size) : null;
@@ -164,8 +167,39 @@ function imdsRequest(method, path, headers, timeout, cb) {
   });
 }
 
+function refreshImdsToken(timeout) {
+  imdsTokenCache = new Promise((resolve, reject) => {
+    imdsRequest('PUT', '/latest/api/token', {'X-aws-ec2-metadata-token-ttl-seconds': `${IMDS_TOKEN_TTL_IN_SECONDS}`}, timeout, (err, token) => {
+      if (err) {
+        reject(err);
+      } else {
+        resolve({
+          token,
+          cachedAt: Date.now()
+        });
+      }
+    });
+  });
+  return imdsTokenCache;
+}
+
+function getImdsToken(timeout, cb) {
+  if (imdsTokenCache === undefined) {
+    refreshImdsToken(timeout).then(({token}) => cb(null, token)).catch(cb);
+  } else {
+    imdsTokenCache.then(({token, cachedAt}) => {
+      if ((Date.now()-cachedAt) > IMDS_TOKEN_MAX_AGE_IN_MILLISECONDS) {
+        imdsTokenCache = undefined;
+        getImdsToken(timeout, cb);
+      } else {
+        cb(null, token);
+      }
+    }).catch(cb);
+  }
+}
+
 function imds(path, timeout, cb) {
-  imdsRequest('PUT', '/latest/api/token', {'X-aws-ec2-metadata-token-ttl-seconds': '60'}, timeout, (err, token) => {
+  getImdsToken(timeout, (err, token) => {
     if (err) {
       cb(err);
     } else {
