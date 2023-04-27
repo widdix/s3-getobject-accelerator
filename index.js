@@ -59,7 +59,6 @@ function parseContentRange(contentRange) {
 function request(nodemodule, options, body, cb) {
   options.lookup = getDnsCache;
   const req = nodemodule.request(options, (res) => {
-    //res.setTimeout(); // FIXME
     let size = ('content-length' in res.headers) ? parseInt(res.headers['content-length'], 10) : 0;
     const bodyChunks = ('content-length' in res.headers) ? null : [];
     const bodyBuffer = ('content-length' in res.headers) ? Buffer.allocUnsafe(size) : null;
