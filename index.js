@@ -405,7 +405,13 @@ function getObject({Bucket, Key, VersionId, PartNumber, Range}, timeout, cb) {
             if (err) {
               cb(err);
             } else {
-              if (res.statusCode === 206) {
+              if (res.statusCode === 200 && body.length === 0) {
+                const data = {
+                  Body: body,
+                  ContentLength: body.length
+                };
+                cb(null, data);
+              } else if (res.statusCode === 206) {
                 const data = {
                   Body: body,
                   ContentLength: body.length
@@ -578,19 +584,27 @@ exports.download = ({bucket, key, version}, {partSizeInMegabytes, concurrency, c
         partsDownloading[1] = getObject(params, timeout, (err, data) => {
           delete partsDownloading[1];
           if (err) {
-            reject(err);
-          } else {
-            const contentRange = parseContentRange(data.ContentRange);
-            if (contentRange === undefined) {
-              reject(new Error(`unexpected S3 content range: ${data.ContentRange}`));
+            if (err.code === 'InvalidRange') {
+              resolve({metadata: {lengthInBytes: 0}, body: Buffer.alloc(0)});
             } else {
-              const metadata = {
-                lengthInBytes: contentRange.length
-              };
-              if ('PartsCount' in data) {
-                metadata.parts = data.PartsCount;
+              reject(err);
+            }
+          } else {
+            if (data.ContentLength === 0) {
+              resolve({metadata: {lengthInBytes: 0}, body: Buffer.alloc(0)});
+            } else {
+              const contentRange = parseContentRange(data.ContentRange);
+              if (contentRange === undefined) {
+                reject(new Error(`unexpected S3 content range: ${data.ContentRange}`));
+              } else {
+                const metadata = {
+                  lengthInBytes: contentRange.length
+                };
+                if ('PartsCount' in data) {
+                  metadata.parts = data.PartsCount;
+                }
+                resolve({metadata, body: data.Body});
               }
-              resolve({metadata, body: data.Body});
             }
           }
         });

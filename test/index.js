@@ -345,6 +345,42 @@ describe('index', () => {
                 );
               });
             });
+            it('empty file', (done) => {
+              nock('https://bucket.s3.eu-west-1.amazonaws.com', {
+                reqheaders: {
+                  'x-amz-content-sha256': /.*/,
+                  'x-amz-date': /.*/,
+                  authorization: /.*/
+                }
+              })
+                .get('/key')
+                .query({
+                  versionId: 'version',
+                  partNumber: '1'
+                })
+                .reply(206, Buffer.alloc(0), {
+                  'Content-Length': '0',
+                  'Content-Type': 'text/plain'
+                });
+              mockfs({
+                '/tmp': {
+                }
+              });
+              pipeline(
+                download({bucket:'bucket', key: 'key', version: 'version'}, {concurrency: 4}).readStream(),
+                fs.createWriteStream('/tmp/test'),
+                (err) => {
+                  if (err) {
+                    done(err);
+                  } else {
+                    assert.ok(nock.isDone());
+                    const {size} = fs.statSync('/tmp/test');
+                    assert.deepStrictEqual(size, 0);
+                    done();
+                  }
+                }
+              );
+            });
             it('happy', (done) => {
               const bytes = 1000000;
               nockPart(1000000, 1, 1, bytes);
@@ -641,6 +677,41 @@ describe('index', () => {
                     done();
                   } else {
                     assert.fail();
+                  }
+                }
+              );
+            });
+            it('empty file', (done) => {
+              nock('https://bucket.s3.eu-west-1.amazonaws.com', {
+                reqheaders: {
+                  range: 'bytes=0-7999999',
+                  'x-amz-content-sha256': /.*/,
+                  'x-amz-date': /.*/,
+                  authorization: /.*/
+                }
+              })
+                .get('/key')
+                .query({
+                  versionId: 'version'
+                })
+                .reply(416, '<?xml version="1.0" encoding="UTF-8"?>\n<Error><Code>InvalidRange</Code><Message>The requested range is not satisfiable</Message><RangeRequested>bytes=0-7999999</RangeRequested><ActualObjectSize>0</ActualObjectSize><RequestId>X98GTEXW2R90YZ2Y</RequestId><HostId>n/pHIOHiOaojuuH5uQ2JGqASSO3cPPCqrb1fHBJAVEdRu/XDLCR1VMwcVCUSv4DwwfKMxSY9wBQ=</HostId></Error>', {
+                  'Content-Type': 'application/xml'
+                });
+              mockfs({
+                '/tmp': {
+                }
+              });
+              pipeline(
+                download({bucket:'bucket', key: 'key', version: 'version'}, {partSizeInMegabytes: 8, concurrency: 4}).readStream(),
+                fs.createWriteStream('/tmp/test'),
+                (err) => {
+                  if (err) {
+                    done(err);
+                  } else {
+                    assert.ok(nock.isDone());
+                    const {size} = fs.statSync('/tmp/test');
+                    assert.deepStrictEqual(size, 0);
+                    done();
                   }
                 }
               );
