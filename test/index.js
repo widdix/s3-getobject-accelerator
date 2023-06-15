@@ -14,14 +14,14 @@ function nockPart(partSize, partNumber, parts, bytes, optionalTimeout) {
   if (parts > 1) {
     headers['x-amz-mp-parts-count'] = `${parts}`;
   }
-  const n = nock('https://bucket.s3.eu-west-1.amazonaws.com', {
+  const n = nock('https://s3.eu-west-1.amazonaws.com', {
     reqheaders: {
       'x-amz-content-sha256': /.*/,
       'x-amz-date': /.*/,
       authorization: /.*/
     }
   })
-    .get('/key')
+    .get('/bucket/key')
     .query({
       versionId: 'version',
       partNumber: `${partNumber}`
@@ -35,7 +35,7 @@ function nockPart(partSize, partNumber, parts, bytes, optionalTimeout) {
 
 function nockRange(startByte, endByte, bytes, optionalTimeout) {
   const size = Math.min(endByte-startByte+1, bytes);
-  const n = nock('https://bucket.s3.eu-west-1.amazonaws.com', {
+  const n = nock('https://s3.eu-west-1.amazonaws.com', {
     reqheaders: {
       range: `bytes=${startByte}-${endByte}`,
       'x-amz-content-sha256': /.*/,
@@ -43,7 +43,7 @@ function nockRange(startByte, endByte, bytes, optionalTimeout) {
       authorization: /.*/
     }
   })
-    .get('/key')
+    .get('/bucket/key')
     .query({
       versionId: 'version'
     });
@@ -213,14 +213,14 @@ describe('index', () => {
           describe('one part', () => {
             describe('error', () => {
               it('NoSuchBucket', (done) => {
-                nock('https://bucket.s3.eu-west-1.amazonaws.com', {
+                nock('https://s3.eu-west-1.amazonaws.com', {
                   reqheaders: {
                     'x-amz-content-sha256': /.*/,
                     'x-amz-date': /.*/,
                     authorization: /.*/
                   }
                 })
-                  .get('/key')
+                  .get('/bucket/key')
                   .query({
                     versionId: 'version',
                     partNumber: '1'
@@ -246,14 +246,14 @@ describe('index', () => {
                 );
               });
               it('NoSuchKey', (done) => {
-                nock('https://bucket.s3.eu-west-1.amazonaws.com', {
+                nock('https://s3.eu-west-1.amazonaws.com', {
                   reqheaders: {
                     'x-amz-content-sha256': /.*/,
                     'x-amz-date': /.*/,
                     authorization: /.*/
                   }
                 })
-                  .get('/key')
+                  .get('/bucket/key')
                   .query({
                     versionId: 'version',
                     partNumber: '1'
@@ -279,14 +279,14 @@ describe('index', () => {
                 );
               });
               it('AccessDenied', (done) => {
-                nock('https://bucket.s3.eu-west-1.amazonaws.com', {
+                nock('https://s3.eu-west-1.amazonaws.com', {
                   reqheaders: {
                     'x-amz-content-sha256': /.*/,
                     'x-amz-date': /.*/,
                     authorization: /.*/
                   }
                 })
-                  .get('/key')
+                  .get('/bucket/key')
                   .query({
                     versionId: 'version',
                     partNumber: '1'
@@ -312,14 +312,14 @@ describe('index', () => {
                 );
               });
               it('download error', (done) => {
-                nock('https://bucket.s3.eu-west-1.amazonaws.com', {
+                nock('https://s3.eu-west-1.amazonaws.com', {
                   reqheaders: {
                     'x-amz-content-sha256': /.*/,
                     'x-amz-date': /.*/,
                     authorization: /.*/
                   }
                 })
-                  .get('/key')
+                  .get('/bucket/key')
                   .query({
                     versionId: 'version',
                     partNumber: '1'
@@ -346,14 +346,14 @@ describe('index', () => {
               });
             });
             it('empty file', (done) => {
-              nock('https://bucket.s3.eu-west-1.amazonaws.com', {
+              nock('https://s3.eu-west-1.amazonaws.com', {
                 reqheaders: {
                   'x-amz-content-sha256': /.*/,
                   'x-amz-date': /.*/,
                   authorization: /.*/
                 }
               })
-                .get('/key')
+                .get('/bucket/key')
                 .query({
                   versionId: 'version',
                   partNumber: '1'
@@ -433,14 +433,14 @@ describe('index', () => {
             it('download error', (done) => {
               const bytes = 17000000;
               nockPart(8000000, 1, 3, bytes);
-              nock('https://bucket.s3.eu-west-1.amazonaws.com', {
+              nock('https://s3.eu-west-1.amazonaws.com', {
                 reqheaders: {
                   'x-amz-content-sha256': /.*/,
                   'x-amz-date': /.*/,
                   authorization: /.*/
                 }
               })
-                .get('/key')
+                .get('/bucket/key')
                 .query({
                   versionId: 'version',
                   partNumber: '2'
@@ -649,7 +649,7 @@ describe('index', () => {
         describe('with partSizeInMegabytes', () => {
           describe('object size < part size', () => {
             it('download error', (done) => {
-              nock('https://bucket.s3.eu-west-1.amazonaws.com', {
+              nock('https://s3.eu-west-1.amazonaws.com', {
                 reqheaders: {
                   range: 'bytes=0-7999999',
                   'x-amz-content-sha256': /.*/,
@@ -657,7 +657,7 @@ describe('index', () => {
                   authorization: /.*/
                 }
               })
-                .get('/key')
+                .get('/bucket/key')
                 .query({
                   versionId: 'version'
                 })
@@ -682,7 +682,7 @@ describe('index', () => {
               );
             });
             it('empty file', (done) => {
-              nock('https://bucket.s3.eu-west-1.amazonaws.com', {
+              nock('https://s3.eu-west-1.amazonaws.com', {
                 reqheaders: {
                   range: 'bytes=0-7999999',
                   'x-amz-content-sha256': /.*/,
@@ -690,7 +690,7 @@ describe('index', () => {
                   authorization: /.*/
                 }
               })
-                .get('/key')
+                .get('/bucket/key')
                 .query({
                   versionId: 'version'
                 })
@@ -814,7 +814,7 @@ describe('index', () => {
             it('download error', (done) => {
               const bytes = 24000000;
               nockRange(0, 7999999, bytes);
-              nock('https://bucket.s3.eu-west-1.amazonaws.com', {
+              nock('https://s3.eu-west-1.amazonaws.com', {
                 reqheaders: {
                   range: 'bytes=8000000-15999999',
                   'x-amz-content-sha256': /.*/,
@@ -822,7 +822,7 @@ describe('index', () => {
                   authorization: /.*/
                 }
               })
-                .get('/key')
+                .get('/bucket/key')
                 .query({
                   versionId: 'version'
                 })
@@ -1030,7 +1030,7 @@ describe('index', () => {
               const bytes = 33000000;
               nockRange(0, 7999999, bytes);
               nockRange(8000000, 15999999, bytes);
-              nock('https://bucket.s3.eu-west-1.amazonaws.com', {
+              nock('https://s3.eu-west-1.amazonaws.com', {
                 reqheaders: {
                   range: 'bytes=16000000-23999999',
                   'x-amz-content-sha256': /.*/,
@@ -1038,7 +1038,7 @@ describe('index', () => {
                   authorization: /.*/
                 }
               })
-                .get('/key')
+                .get('/bucket/key')
                 .query({
                   versionId: 'version'
                 })
@@ -1075,7 +1075,7 @@ describe('index', () => {
               const bytes = 33000000;
               nockRange(0, 7999999, bytes);
               nockRange(8000000, 15999999, bytes);
-              nock('https://bucket.s3.eu-west-1.amazonaws.com', {
+              nock('https://s3.eu-west-1.amazonaws.com', {
                 reqheaders: {
                   range: 'bytes=16000000-23999999',
                   'x-amz-content-sha256': /.*/,
@@ -1083,7 +1083,7 @@ describe('index', () => {
                   authorization: /.*/
                 }
               })
-                .get('/key')
+                .get('/bucket/key')
                 .query({
                   versionId: 'version'
                 })
@@ -1120,7 +1120,7 @@ describe('index', () => {
               const bytes = 33000000;
               nockRange(0, 7999999, bytes);
               nockRange(8000000, 15999999, bytes);
-              nock('https://bucket.s3.eu-west-1.amazonaws.com', {
+              nock('https://s3.eu-west-1.amazonaws.com', {
                 reqheaders: {
                   range: 'bytes=16000000-23999999',
                   'x-amz-content-sha256': /.*/,
@@ -1128,7 +1128,7 @@ describe('index', () => {
                   authorization: /.*/
                 }
               })
-                .get('/key')
+                .get('/bucket/key')
                 .query({
                   versionId: 'version'
                 })
@@ -1161,7 +1161,7 @@ describe('index', () => {
               const bytes = 33000000;
               nockRange(0, 7999999, bytes);
               nockRange(8000000, 15999999, bytes);
-              nock('https://bucket.s3.eu-west-1.amazonaws.com', {
+              nock('https://s3.eu-west-1.amazonaws.com', {
                 reqheaders: {
                   range: 'bytes=16000000-23999999',
                   'x-amz-content-sha256': /.*/,
@@ -1169,7 +1169,7 @@ describe('index', () => {
                   authorization: /.*/
                 }
               })
-                .get('/key')
+                .get('/bucket/key')
                 .query({
                   versionId: 'version'
                 })
@@ -1202,7 +1202,7 @@ describe('index', () => {
               const bytes = 33000000;
               nockRange(0, 7999999, bytes);
               nockRange(8000000, 15999999, bytes);
-              nock('https://bucket.s3.eu-west-1.amazonaws.com', {
+              nock('https://s3.eu-west-1.amazonaws.com', {
                 reqheaders: {
                   range: 'bytes=16000000-23999999',
                   'x-amz-content-sha256': /.*/,
@@ -1210,7 +1210,7 @@ describe('index', () => {
                   authorization: /.*/
                 }
               })
-                .get('/key')
+                .get('/bucket/key')
                 .query({
                   versionId: 'version'
                 })
@@ -1243,7 +1243,7 @@ describe('index', () => {
               const bytes = 33000000;
               nockRange(0, 7999999, bytes);
               nockRange(8000000, 15999999, bytes);
-              nock('https://bucket.s3.eu-west-1.amazonaws.com', {
+              nock('https://s3.eu-west-1.amazonaws.com', {
                 reqheaders: {
                   range: 'bytes=16000000-23999999',
                   'x-amz-content-sha256': /.*/,
@@ -1251,7 +1251,7 @@ describe('index', () => {
                   authorization: /.*/
                 }
               })
-                .get('/key')
+                .get('/bucket/key')
                 .query({
                   versionId: 'version'
                 })

@@ -335,8 +335,9 @@ function getDnsCache(hostname, options, cb) {
   }
 }
 
-function getHostname(bucket, region) {
-  return `${bucket}.s3.${region}.amazonaws.com`;
+function getHostname(region) {
+  // TODO Switch to virtual-hosted–style requests as soon as bucket names with a dot are supported (https://docs.aws.amazon.com/AmazonS3/latest/userguide/VirtualHosting.html)
+  return `s3.${region}.amazonaws.com`;
 }
 
 function mapTimeout(connectionTimeoutInMilliseconds) {
@@ -392,9 +393,9 @@ function getObject({Bucket, Key, VersionId, PartNumber, Range}, timeout, cb) {
           cb(err);
         } else {
           const options = aws4.sign({
-            hostname: getHostname(Bucket, region),
+            hostname: getHostname(region),
             method: 'GET',
-            path: `/${escapeKey(Key)}?${querystring.stringify(qs)}`,
+            path: `/${Bucket}/${escapeKey(Key)}?${querystring.stringify(qs)}`,
             headers,
             service: 's3',
             region,
