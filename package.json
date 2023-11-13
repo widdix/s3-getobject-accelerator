@@ -4,7 +4,7 @@
   "description": "Get large objects from S3 by using parallel byte-range fetches/parts to improve performance.",
   "main": "index.js",
   "scripts": {
-    "test": "eslint . && c8 mocha -t 5000"
+    "test": "eslint . && c8 mocha -t 30000"
   },
   "repository": {
     "type": "git",

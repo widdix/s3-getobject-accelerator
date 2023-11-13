@@ -28,6 +28,7 @@ const AWS_CREDENTIALS_MAX_AGE_IN_MILLISECONDS = 4*60*1000; // From AWS docs: We 
 const DNS_RECORD_MAX_AGE_IN_MILLISECONDS = 10*1000;
 const IMDS_TOKEN_TTL_IN_SECONDS = 60*10;
 const IMDS_TOKEN_MAX_AGE_IN_MILLISECONDS = (IMDS_TOKEN_TTL_IN_SECONDS-60)*1000;
+const MAX_RETRY_DELAY_IN_SECONDS = 20;
 
 let imdsTokenCache = undefined;
 let imdsRegionCache = undefined;
@@ -98,7 +99,8 @@ function retryrequest(nodemodule, requestOptions, body, retryOptions, cb) {
   const retry = (err) => {
     attempt++;
     if (attempt <= retryOptions.maxAttempts) {
-      const delay = Math.random() * (Math.pow(2, attempt-1) * 100);
+      const maxRetryDelayInSeconds = ('maxRetryDelayInSeconds' in retryOptions) ? retryOptions.maxRetryDelayInSeconds : MAX_RETRY_DELAY_IN_SECONDS;
+      const delayInMilliseconds = Math.min(Math.random() * Math.pow(2, attempt-1), maxRetryDelayInSeconds) * 1000;
       setTimeout(() => {
         if (requestOptions.signal) {
           if (requestOptions.signal.aborted === true) {
@@ -109,7 +111,7 @@ function retryrequest(nodemodule, requestOptions, body, retryOptions, cb) {
         } else {
           req();
         }
-      }, delay);
+      }, delayInMilliseconds);
     } else {
       cb(err);
     }
