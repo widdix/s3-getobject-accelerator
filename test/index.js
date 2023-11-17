@@ -6,8 +6,9 @@ const mockfs = require('mock-fs');
 const nock = require('nock');
 const {clearCache, request, imds, download} = require('../index.js');
 
-function nockPart(partSize, partNumber, parts, bytes, optionalTimeout) {
+function nockPart(partSize, partNumber, parts, bytes, optionalTimeout, optionalResponseHeaders) {
   const headers = {
+    ...(optionalResponseHeaders || {}),
     'Content-Length': `${partSize}`,
     'Content-Range': `bytes ${(partNumber-1)*partSize}-${partNumber*partSize-1}/${bytes}`
   };
@@ -509,8 +510,8 @@ describe('index', () => {
               const downloadingPartNos = [];
               const downloadedPartNos = [];
               const donePartNos = [];
-              d.on('object:downloading', ({lengthInBytes}) => {
-                length = lengthInBytes;
+              d.on('object:downloading', ({objectLengthInBytes}) => {
+                length = objectLengthInBytes;
               });
               d.on('part:downloading', ({partNo}) => {
                 active++;
@@ -887,8 +888,8 @@ describe('index', () => {
               const downloadingPartNos = [];
               const downloadedPartNos = [];
               const donePartNos = [];
-              d.on('object:downloading', ({lengthInBytes}) => {
-                length = lengthInBytes;
+              d.on('object:downloading', ({objectLengthInBytes}) => {
+                length = objectLengthInBytes;
               });
               d.on('part:downloading', ({partNo}) => {
                 active++;
@@ -1336,7 +1337,46 @@ describe('index', () => {
             if (err) {
               done(err);
             } else {
-              assert.deepStrictEqual({lengthInBytes: bytes}, metadata);
+              assert.deepStrictEqual({
+                objectLengthInBytes: bytes,
+                lengthInBytes: bytes,
+              }, metadata);
+              d.file('/tmp/test', (err) => {
+                if (err) {
+                  done(err);
+                } else {
+                  assert.ok(nock.isDone());
+                  const {size} = fs.statSync('/tmp/test');
+                  assert.deepStrictEqual(size, bytes);
+                  done();
+                }
+              });
+            }
+          });
+        });
+        it('Object Lock', (done) => {
+          const bytes = 1000000;
+          nockPart(1000000, 1, 1, bytes, undefined, {
+            'x-amz-object-lock-mode': 'GOVERNANCE',
+            'x-amz-object-lock-retain-until-date': '2023-11-17T10:58:34.000Z',
+            'x-amz-object-lock-legal-hold': 'ON'
+          });
+          mockfs({
+            '/tmp': {
+            }
+          });
+          const d = download({bucket:'bucket', key: 'key', version: 'version'}, {concurrency: 4});
+          d.meta((err, metadata) => {
+            if (err) {
+              done(err);
+            } else {
+              assert.deepStrictEqual({
+                objectLengthInBytes: bytes,
+                lengthInBytes: bytes,
+                objectLockMode: 'GOVERNANCE',
+                objectLockRetainUntilDate: new Date('2023-11-17T10:58:34.000Z'),
+                objectLockLegalHoldStatus: 'ON'
+              }, metadata);
               d.file('/tmp/test', (err) => {
                 if (err) {
                   done(err);

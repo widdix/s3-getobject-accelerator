@@ -59,7 +59,7 @@ d.meta((err, metadata) => {
   if (err) {
     console.error('something went wrong', err);
   } else {
-    if (metadata.lengthInBytes > 1024 * 1024 * 1024 * 1024) {
+    if (metadata.objectLengthInBytes > 1024 * 1024 * 1024 * 1024) {
       console.error('file is larger than 1 TiB');
     } else {
       d.file('/tmp/test', (err) => {
@@ -91,8 +91,12 @@ d.meta((err, metadata) => {
     * `cb(err, metadata)` `<Function>`
       * `err` `<Error>`
       * `metadata` `<Object>`
-        * `lengthInBytes` `<number>`
-        * `parts` `<number>` Number of parts available (optional)
+        * `objectLengthInBytes` `<number>` Total size of object  (not just the part) in bytes
+        * `parts` `<number>` (optional) Number of parts available
+        * `objectLockMode` `<string>` The Object Lock mode currently in place for this object. (Valid Values: GOVERNANCE, COMPLIANCE)
+        * `objectLockRetainUntilDate` `<Date>` The date and time when this object's Object Lock will expire.
+        * `objectLockLegalHoldStatus` `<string>` Indicates whether this object has an active legal hold. This field is only returned if you have permission to view an object's legal hold status. (Valid Values: ON, OFF)
+        * `lengthInBytes` `<number>` Total size of object (not just the part) in bytes (deprecated, use `objectLengthInBytes` instead)
   * `readStream()` `<Function>` Start download
     * Returns: [ReadStream](https://nodejs.org/api/stream.html#class-streamreadable)
   * `file(path, cb)` `<Function>` Start download

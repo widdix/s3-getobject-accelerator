@@ -373,6 +373,36 @@ function escapeKey(string) { // source https://github.com/aws/aws-sdk-js/blob/64
     });
 }
 
+function addStringHeaderValueIfPresent(data, dataKey, headers, headerKey) {
+  if (headerKey in headers) {
+    data[dataKey] = headers[headerKey];
+  }
+  return data;
+}
+
+function addIntHeaderValueIfPresent(data, dataKey, headers, headerKey) {
+  if (headerKey in headers) {
+    data[dataKey] = parseInt(headers[headerKey], 10);
+  }
+  return data;
+}
+
+function addDateHeaderValueIfPresent(data, dataKey, headers, headerKey) {
+  if (headerKey in headers) {
+    data[dataKey] = new Date(headers[headerKey]);
+  }
+  return data;
+}
+
+function addBooleanHeaderValueIfPresent(data, dataKey, headers, headerKey) {
+  if (headerKey in headers) {
+    data[dataKey] = headers[headerKey] === 'true';
+  } else {
+    data[dataKey] = false;
+  }
+  return data;
+}
+
 function getObject({Bucket, Key, VersionId, PartNumber, Range}, timeout, cb) {
   const ac = new AbortController();
   const qs = {};
@@ -416,16 +446,51 @@ function getObject({Bucket, Key, VersionId, PartNumber, Range}, timeout, cb) {
                 cb(null, data);
               } else if (res.statusCode === 206) {
                 const data = {
-                  Body: body,
-                  ContentLength: body.length
+                  Body: body
                 };
-                if ('x-amz-mp-parts-count' in res.headers) {
-                  data.PartsCount = parseInt(res.headers['x-amz-mp-parts-count'], 10);
+                addBooleanHeaderValueIfPresent(data, 'DeleteMarker', res.headers, 'x-amz-delete-marker');
+                addStringHeaderValueIfPresent(data, 'AcceptRanges', res.headers, 'accept-ranges');
+                addStringHeaderValueIfPresent(data, 'Expiration', res.headers, 'x-amz-expiration');
+                addStringHeaderValueIfPresent(data, 'Restore', res.headers, 'x-amz-restore');
+                addDateHeaderValueIfPresent(data, 'LastModified', res.headers, 'last-modified');
+                addIntHeaderValueIfPresent(data, 'ContentLength', res.headers, 'content-length');
+                addStringHeaderValueIfPresent(data, 'ETag', res.headers, 'etag');
+                addStringHeaderValueIfPresent(data, 'ChecksumCRC32', res.headers, 'x-amz-checksum-crc32');
+                addStringHeaderValueIfPresent(data, 'ChecksumCRC32C', res.headers, 'x-amz-checksum-crc32c');
+                addStringHeaderValueIfPresent(data, 'ChecksumSHA1', res.headers, 'x-amz-checksum-sha1');
+                addStringHeaderValueIfPresent(data, 'ChecksumSHA256', res.headers, 'x-amz-checksum-sha256');
+                addIntHeaderValueIfPresent(data, 'MissingMeta', res.headers, 'x-amz-missing-meta');
+                addStringHeaderValueIfPresent(data, 'VersionId', res.headers, 'x-amz-version-id');
+                addStringHeaderValueIfPresent(data, 'CacheControl', res.headers, 'cache-control');
+                addStringHeaderValueIfPresent(data, 'ContentDisposition', res.headers, 'content-disposition');
+                addStringHeaderValueIfPresent(data, 'ContentEncoding', res.headers, 'content-encoding');
+                addStringHeaderValueIfPresent(data, 'ContentLanguage', res.headers, 'content-language');
+                addStringHeaderValueIfPresent(data, 'ContentRange', res.headers, 'content-range');
+                addStringHeaderValueIfPresent(data, 'ContentType', res.headers, 'content-type');
+                addDateHeaderValueIfPresent(data, 'Expires', res.headers, 'expires');
+                addStringHeaderValueIfPresent(data, 'WebsiteRedirectLocation', res.headers, 'x-amz-website-redirect-location');
+                addStringHeaderValueIfPresent(data, 'ServerSideEncryption', res.headers, 'x-amz-server-side-encryption');
+                data.Metadata = Object.keys(res.headers).filter(key => key.startsWith('x-amz-meta-')).reduce((acc, key) => {
+                  acc[key] = res.headers[key];
+                  return acc;
+                }, {});
+                addStringHeaderValueIfPresent(data, 'SSECustomerAlgorithm', res.headers, 'x-amz-server-side-encryption-customer-algorithm');
+                addStringHeaderValueIfPresent(data, 'SSECustomerKeyMD5', res.headers, 'x-amz-server-side-encryption-customer-key-MD5');
+                addStringHeaderValueIfPresent(data, 'SSEKMSKeyId', res.headers, 'x-amz-server-side-encryption-aws-kms-key-id');
+                addBooleanHeaderValueIfPresent(data, 'BucketKeyEnabled', res.headers, 'x-amz-server-side-encryption-bucket-key-enabled');
+                addStringHeaderValueIfPresent(data, 'StorageClass', res.headers, 'x-amz-storage-class');
+                addStringHeaderValueIfPresent(data, 'RequestCharged', res.headers, 'x-amz-request-charged');
+                addStringHeaderValueIfPresent(data, 'ReplicationStatus', res.headers, 'x-amz-replication-status');
+                addIntHeaderValueIfPresent(data, 'PartsCount', res.headers, 'x-amz-mp-parts-count');
+                addIntHeaderValueIfPresent(data, 'TagCount', res.headers, 'x-amz-tagging-count');
+                addStringHeaderValueIfPresent(data, 'ObjectLockMode', res.headers, 'x-amz-object-lock-mode');
+                addDateHeaderValueIfPresent(data, 'ObjectLockRetainUntilDate', res.headers, 'x-amz-object-lock-retain-until-date');
+                addStringHeaderValueIfPresent(data, 'ObjectLockLegalHoldStatus', res.headers, 'x-amz-object-lock-legal-hold');
+                if (data.ContentLength !== body.length) {
+                  cb(new Error('content length does not match'));
+                } else {
+                  cb(null, data);
                 }
-                if ('content-range' in res.headers) {
-                  data.ContentRange = res.headers['content-range'];
-                }
-                cb(null, data);
               } else {
                 if (res.headers['content-type'] === 'application/xml') {
                   parseString(body.toString('utf8'), {explicitArray: false}, function (err, result) {
@@ -588,23 +653,33 @@ exports.download = ({bucket, key, version}, {partSizeInMegabytes, concurrency, c
           delete partsDownloading[1];
           if (err) {
             if (err.code === 'InvalidRange') {
-              resolve({metadata: {lengthInBytes: 0}, body: Buffer.alloc(0)});
+              resolve({metadata: {objectLengthInBytes: 0, lengthInBytes: 0}, body: Buffer.alloc(0)});
             } else {
               reject(err);
             }
           } else {
             if (data.ContentLength === 0) {
-              resolve({metadata: {lengthInBytes: 0}, body: Buffer.alloc(0)});
+              resolve({metadata: {objectLengthInBytes: 0, lengthInBytes: 0}, body: Buffer.alloc(0)});
             } else {
               const contentRange = parseContentRange(data.ContentRange);
               if (contentRange === undefined) {
                 reject(new Error(`unexpected S3 content range: ${data.ContentRange}`));
               } else {
                 const metadata = {
-                  lengthInBytes: contentRange.length
+                  lengthInBytes: contentRange.length, // deprecated, for backward compatibility only
+                  objectLengthInBytes: contentRange.length,
                 };
                 if ('PartsCount' in data) {
                   metadata.parts = data.PartsCount;
+                }
+                if ('ObjectLockMode' in data) {
+                  metadata.objectLockMode = data.ObjectLockMode;
+                }
+                if ('ObjectLockRetainUntilDate' in data) {
+                  metadata.objectLockRetainUntilDate = data.ObjectLockRetainUntilDate;
+                }
+                if ('ObjectLockLegalHoldStatus' in data) {
+                  metadata.objectLockLegalHoldStatus = data.ObjectLockLegalHoldStatus;
                 }
                 resolve({metadata, body: data.Body});
               }
@@ -627,7 +702,7 @@ exports.download = ({bucket, key, version}, {partSizeInMegabytes, concurrency, c
         emitter.emit(EVENT_NAME_OBJECT_DOWNLOADING, metadata);
         if (partSizeInBytes === null) {
           emitter.emit(EVENT_NAME_PART_DOWNLOADED, {partNo: 1});
-          if ('parts' in metadata && metadata.parts > 1) {
+          if (metadata.parts > 1) {
             emitter.emit(EVENT_NAME_PART_WRITING, {partNo: 1});
             write(body, () => {
               emitter.emit(EVENT_NAME_PART_DONE, {partNo: 1});
@@ -644,7 +719,7 @@ exports.download = ({bucket, key, version}, {partSizeInMegabytes, concurrency, c
           }
         } else {
           emitter.emit(EVENT_NAME_PART_DOWNLOADED, {partNo: 1});
-          bytesToDownload = metadata.lengthInBytes;
+          bytesToDownload = metadata.objectLengthInBytes;
           if (bytesToDownload <= partSizeInBytes) {
             emitter.emit(EVENT_NAME_PART_WRITING, {partNo: 1});
             stream.end(body, () => {
