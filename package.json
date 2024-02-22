@@ -17,6 +17,7 @@
   },
   "homepage": "https://github.com/widdix/s3-getobject-accelerator#readme",
   "devDependencies": {
+    "aws-sdk": "2.1563.0",
     "c8": "9.1.0",
     "eslint": "8.56.0",
     "mocha": "10.2.0",
