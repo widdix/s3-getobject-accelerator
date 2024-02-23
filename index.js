@@ -274,7 +274,7 @@ function refreshAwsCredentials(timeout) {
 }
 
 function getAwsCredentials({timeout, v2AwsSdkCredentials}, cb) {
-  if (v2AwsSdkCredentials !== undefined) {
+  if (!(v2AwsSdkCredentials === undefined || v2AwsSdkCredentials === null)) {
     v2AwsSdkCredentials.get((err) => {
       if (err) {
         cb(err);
@@ -478,7 +478,7 @@ exports.download = ({bucket, key, version}, {partSizeInMegabytes, concurrency, c
   if (concurrency < 1) {
     throw new Error('concurrency > 0');
   }
-  if (v2AwsSdkCredentials !== undefined) {
+  if (!(v2AwsSdkCredentials === undefined || v2AwsSdkCredentials === null)) {
     if (typeof v2AwsSdkCredentials.get !== 'function') {
       throw new Error('invalid v2AwsSdkCredentials');
     }
