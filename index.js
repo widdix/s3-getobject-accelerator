@@ -273,14 +273,29 @@ function refreshAwsCredentials(timeout) {
   return imdsCredentialsCache;
 }
 
-function getAwsCredentials(timeout, cb) {
-  if (imdsCredentialsCache === undefined) {
+function getAwsCredentials({timeout, v2AwsSdkCredentials}, cb) {
+  if (v2AwsSdkCredentials !== undefined) {
+    v2AwsSdkCredentials.get((err) => {
+      if (err) {
+        cb(err);
+      } else {
+        const credentials = {
+          accessKeyId: v2AwsSdkCredentials.accessKeyId,
+          secretAccessKey: v2AwsSdkCredentials.secretAccessKey
+        };
+        if (v2AwsSdkCredentials.sessionToken) {
+          credentials.sessionToken = v2AwsSdkCredentials.sessionToken;
+        }
+        cb(null, credentials);
+      }
+    });
+  } else if (imdsCredentialsCache === undefined) {
     refreshAwsCredentials(timeout).then(credentials => cb(null, credentials)).catch(cb);
   } else {
     imdsCredentialsCache.then(credentials => {
       if ((Date.now()-credentials.cachedAt) > AWS_CREDENTIALS_MAX_AGE_IN_MILLISECONDS) {
         imdsCredentialsCache = undefined;
-        getAwsCredentials(timeout, cb);
+        getAwsCredentials({timeout, v2AwsSdkCredentials}, cb);
       } else {
         cb(null, credentials);
       }
@@ -373,7 +388,7 @@ function escapeKey(string) { // source https://github.com/aws/aws-sdk-js/blob/64
     });
 }
 
-function getObject({Bucket, Key, VersionId, PartNumber, Range}, timeout, cb) {
+function getObject({Bucket, Key, VersionId, PartNumber, Range}, {timeout, v2AwsSdkCredentials}, cb) {
   const ac = new AbortController();
   const qs = {};
   const headers = {};
@@ -390,7 +405,7 @@ function getObject({Bucket, Key, VersionId, PartNumber, Range}, timeout, cb) {
     if (err) {
       cb(err);
     } else {
-      getAwsCredentials(timeout, (err, credentials) => {
+      getAwsCredentials({timeout, v2AwsSdkCredentials}, (err, credentials) => {
         if (err) {
           cb(err);
         } else {
@@ -459,9 +474,14 @@ function getObject({Bucket, Key, VersionId, PartNumber, Range}, timeout, cb) {
   return ac;
 }
 
-exports.download = ({bucket, key, version}, {partSizeInMegabytes, concurrency, connectionTimeoutInMilliseconds}) => {
+exports.download = ({bucket, key, version}, {partSizeInMegabytes, concurrency, connectionTimeoutInMilliseconds, v2AwsSdkCredentials}) => {
   if (concurrency < 1) {
     throw new Error('concurrency > 0');
+  }
+  if (v2AwsSdkCredentials !== undefined) {
+    if (typeof v2AwsSdkCredentials.get !== 'function') {
+      throw new Error('invalid v2AwsSdkCredentials');
+    }
   }
   const timeout = mapTimeout(connectionTimeoutInMilliseconds);
 
@@ -533,7 +553,7 @@ exports.download = ({bucket, key, version}, {partSizeInMegabytes, concurrency, c
       const endByte = Math.min(startByte+partSizeInBytes-1, bytesToDownload-1); // inclusive
       params.Range = `bytes=${startByte}-${endByte}`;
     }
-    const req = getObject(params, timeout, (err, data) => {
+    const req = getObject(params, {timeout, v2AwsSdkCredentials}, (err, data) => {
       delete partsDownloading[partNo];
       if (err) {
         cb(err);
@@ -584,7 +604,7 @@ exports.download = ({bucket, key, version}, {partSizeInMegabytes, concurrency, c
           const endByte = partSizeInBytes-1; // inclusive
           params.Range = `bytes=0-${endByte}`;
         }
-        partsDownloading[1] = getObject(params, timeout, (err, data) => {
+        partsDownloading[1] = getObject(params, {timeout, v2AwsSdkCredentials}, (err, data) => {
           delete partsDownloading[1];
           if (err) {
             if (err.code === 'InvalidRange') {

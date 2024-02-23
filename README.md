@@ -83,9 +83,10 @@ d.meta((err, metadata) => {
   * `key` `<string>`
   * `version` `<string>` (optional)
 * `options` `<Object>`
-  * `partSizeInMegabytes` `<number>` (optional)
+  * `partSizeInMegabytes` `<number>` (optional, defaults to uploaded part size)
   * `concurrency` `<number>`
-  * `connectionTimeoutInMilliseconds` `<number>`
+  * `connectionTimeoutInMilliseconds` `<number>` (optional, defaults to 3000)
+  * `v2AwsSdkCredentials` `<AWS.Credentials>` (optional)
 * Returns:
   * `meta(cb)` `<Function>` Get meta-data before starting the download (downloads the first part and keeps the body in memory until download starts)
     * `cb(err, metadata)` `<Function>`
@@ -109,15 +110,20 @@ d.meta((err, metadata) => {
   * `once(eventName, listener)` See https://nodejs.org/api/events.html#emitteronceeventname-listener
   * `removeListener(eventName, listener)` See https://nodejs.org/api/events.html#emitterremovelistenereventname-listener 
 
-## AWS credentials / region
+## AWS credentials & region
 
-AWS credentials & region is fetched in the following order:
+AWS credentials are fetched in the following order:
 
-1. Environment variables
-  * `AWS_REGION`
+1. `options.v2AwsSdkCredentials`
+2. Environment variables
   * `AWS_ACCESS_KEY_ID`
   * `AWS_SECRET_ACCESS_KEY`
   * `AWS_SESSION_TOKEN` (optional)
+3. IMDSv2
+
+AWS region is fetched in the following order:
+
+1. Environment variable `AWS_REGION`
 2. IMDSv2
 
 ## Considerations
