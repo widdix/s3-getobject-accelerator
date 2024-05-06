@@ -308,7 +308,11 @@ function getRecord() {
   if (this.ringIndex >= this.records.length) {
     this.ringIndex = 0;
   }
-  return record;
+  if (process.versions.node.startsWith('2')) {
+    return [{address: record, family: 4}];
+  } else {
+    return record;
+  }
 }
 
 function refreshDnsCache(hostname, options) { // eslint-disable-line no-unused-vars
@@ -352,9 +356,19 @@ function getDnsCache(hostname, options, cb) {
   }
 }
 
-function getHostname(region) {
-  // TODO Switch to virtual-hosted–style requests as soon as bucket names with a dot are supported (https://docs.aws.amazon.com/AmazonS3/latest/userguide/VirtualHosting.html)
-  return `s3.${region}.amazonaws.com`;
+function getHostname(timeout, endpointHostname, cb) {
+  if (endpointHostname === undefined || endpointHostname === null) {
+    // TODO Switch to virtual-hosted–style requests as soon as bucket names with a dot are supported (https://docs.aws.amazon.com/AmazonS3/latest/userguide/VirtualHosting.html)
+    getAwsRegion(timeout, (err, region) => {
+      if (err) {
+        cb(err);
+      } else {
+        cb(null, `s3.${region}.amazonaws.com`);
+      }
+    });
+  } else {
+    cb(null, endpointHostname);
+  }
 }
 
 function mapTimeout(connectionTimeoutInMilliseconds) {
@@ -388,7 +402,7 @@ function escapeKey(string) { // source https://github.com/aws/aws-sdk-js/blob/64
     });
 }
 
-function getObject({Bucket, Key, VersionId, PartNumber, Range}, {timeout, v2AwsSdkCredentials}, cb) {
+function getObject({Bucket, Key, VersionId, PartNumber, Range}, {timeout, v2AwsSdkCredentials, endpointHostname}, cb) {
   const ac = new AbortController();
   const qs = {};
   const headers = {};
@@ -401,7 +415,7 @@ function getObject({Bucket, Key, VersionId, PartNumber, Range}, {timeout, v2AwsS
   if (Range !== undefined && Range !== null) {
     headers.Range = Range;
   }
-  getAwsRegion(timeout, (err, region) => {
+  getHostname(timeout, endpointHostname, (err, hostname) => {
     if (err) {
       cb(err);
     } else {
@@ -410,12 +424,11 @@ function getObject({Bucket, Key, VersionId, PartNumber, Range}, {timeout, v2AwsS
           cb(err);
         } else {
           const options = aws4.sign({
-            hostname: getHostname(region),
+            hostname,
             method: 'GET',
             path: `/${Bucket}/${escapeKey(Key)}?${querystring.stringify(qs)}`,
             headers,
             service: 's3',
-            region,
             signal: ac.signal,
             timeout
           }, credentials);
@@ -474,7 +487,7 @@ function getObject({Bucket, Key, VersionId, PartNumber, Range}, {timeout, v2AwsS
   return ac;
 }
 
-exports.download = ({bucket, key, version}, {partSizeInMegabytes, concurrency, connectionTimeoutInMilliseconds, v2AwsSdkCredentials}) => {
+exports.download = ({bucket, key, version}, {partSizeInMegabytes, concurrency, connectionTimeoutInMilliseconds, v2AwsSdkCredentials, endpointHostname}) => {
   if (concurrency < 1) {
     throw new Error('concurrency > 0');
   }
@@ -553,7 +566,7 @@ exports.download = ({bucket, key, version}, {partSizeInMegabytes, concurrency, c
       const endByte = Math.min(startByte+partSizeInBytes-1, bytesToDownload-1); // inclusive
       params.Range = `bytes=${startByte}-${endByte}`;
     }
-    const req = getObject(params, {timeout, v2AwsSdkCredentials}, (err, data) => {
+    const req = getObject(params, {timeout, v2AwsSdkCredentials, endpointHostname}, (err, data) => {
       delete partsDownloading[partNo];
       if (err) {
         cb(err);
@@ -604,7 +617,7 @@ exports.download = ({bucket, key, version}, {partSizeInMegabytes, concurrency, c
           const endByte = partSizeInBytes-1; // inclusive
           params.Range = `bytes=0-${endByte}`;
         }
-        partsDownloading[1] = getObject(params, {timeout, v2AwsSdkCredentials}, (err, data) => {
+        partsDownloading[1] = getObject(params, {timeout, v2AwsSdkCredentials, endpointHostname}, (err, data) => {
           delete partsDownloading[1];
           if (err) {
             if (err.code === 'InvalidRange') {

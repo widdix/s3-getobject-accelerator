@@ -7,7 +7,8 @@ const nock = require('nock');
 const AWS = require('aws-sdk');
 const {clearCache, request, imds, download} = require('../index.js');
 
-function nockPart(partSize, partNumber, parts, bytes, optionalTimeout) {
+function nockPart(partSize, partNumber, parts, bytes, hostname, optionalTimeout) {
+  console.log(`nockPart(${partSize}, ${partNumber}, ${parts}, ${bytes}, ${hostname}, ${optionalTimeout})`);
   const headers = {
     'Content-Length': `${partSize}`,
     'Content-Range': `bytes ${(partNumber-1)*partSize}-${partNumber*partSize-1}/${bytes}`
@@ -15,7 +16,7 @@ function nockPart(partSize, partNumber, parts, bytes, optionalTimeout) {
   if (parts > 1) {
     headers['x-amz-mp-parts-count'] = `${parts}`;
   }
-  const n = nock('https://s3.eu-west-1.amazonaws.com', {
+  const n = nock(`https://${hostname}`, {
     reqheaders: {
       'x-amz-content-sha256': /.*/,
       'x-amz-date': /.*/,
@@ -34,9 +35,9 @@ function nockPart(partSize, partNumber, parts, bytes, optionalTimeout) {
   return n;
 }
 
-function nockRange(startByte, endByte, bytes, optionalTimeout) {
+function nockRange(startByte, endByte, bytes, hostname, optionalTimeout) {
   const size = Math.min(endByte-startByte+1, bytes);
-  const n = nock('https://s3.eu-west-1.amazonaws.com', {
+  const n = nock(`https://${hostname}`, {
     reqheaders: {
       range: `bytes=${startByte}-${endByte}`,
       'x-amz-content-sha256': /.*/,
@@ -384,7 +385,7 @@ describe('index', () => {
             });
             it('happy', (done) => {
               const bytes = 1000000;
-              nockPart(1000000, 1, 1, bytes);
+              nockPart(1000000, 1, 1, bytes, 's3.eu-west-1.amazonaws.com');
               mockfs({
                 '/tmp': {
                 }
@@ -404,9 +405,31 @@ describe('index', () => {
                 }
               );
             });
+            it('endpointHostname', (done) => {
+              const bytes = 1000000;
+              nockPart(1000000, 1, 1, bytes, 's3endpoint.com');
+              mockfs({
+                '/tmp': {
+                }
+              });
+              pipeline(
+                download({bucket:'bucket', key: 'key', version: 'version'}, {concurrency: 4, endpointHostname: 's3endpoint.com'}).readStream(),
+                fs.createWriteStream('/tmp/test'),
+                (err) => {
+                  if (err) {
+                    done(err);
+                  } else {
+                    assert.ok(nock.isDone());
+                    const {size} = fs.statSync('/tmp/test');
+                    assert.deepStrictEqual(size, bytes);
+                    done();
+                  }
+                }
+              );
+            });
             it('abort', (done) => {
               const bytes = 1000000;
-              nockPart(1000000, 1, 1, bytes, 200);
+              nockPart(1000000, 1, 1, bytes, 's3.eu-west-1.amazonaws.com', 200);
               mockfs({
                 '/tmp': {
                 }
@@ -433,7 +456,7 @@ describe('index', () => {
           describe('multiple parts', () => {
             it('download error', (done) => {
               const bytes = 17000000;
-              nockPart(8000000, 1, 3, bytes);
+              nockPart(8000000, 1, 3, bytes, 's3.eu-west-1.amazonaws.com');
               nock('https://s3.eu-west-1.amazonaws.com', {
                 reqheaders: {
                   'x-amz-content-sha256': /.*/,
@@ -447,7 +470,7 @@ describe('index', () => {
                   partNumber: '2'
                 })
                 .reply(403);
-              nockPart(1000000, 3, 3, bytes);
+              nockPart(1000000, 3, 3, bytes, 's3.eu-west-1.amazonaws.com');
               mockfs({
                 '/tmp': {
                 }
@@ -469,9 +492,9 @@ describe('index', () => {
             });
             it('abort', (done) => {
               const bytes = 17000000;
-              nockPart(8000000, 1, 3, bytes, 100);
-              nockPart(8000000, 2, 3, bytes, 200);
-              nockPart(1000000, 3, 3, bytes, 300);
+              nockPart(8000000, 1, 3, bytes, 's3.eu-west-1.amazonaws.com', 100);
+              nockPart(8000000, 2, 3, bytes, 's3.eu-west-1.amazonaws.com', 200);
+              nockPart(1000000, 3, 3, bytes, 's3.eu-west-1.amazonaws.com', 300);
               mockfs({
                 '/tmp': {
                 }
@@ -496,9 +519,9 @@ describe('index', () => {
             });
             it('number of parts < concurrency', (done) => {
               const bytes = 17000000;
-              nockPart(8000000, 1, 3, bytes);
-              nockPart(8000000, 2, 3, bytes);
-              nockPart(1000000, 3, 3, bytes);
+              nockPart(8000000, 1, 3, bytes, 's3.eu-west-1.amazonaws.com');
+              nockPart(8000000, 2, 3, bytes, 's3.eu-west-1.amazonaws.com');
+              nockPart(1000000, 3, 3, bytes, 's3.eu-west-1.amazonaws.com');
               mockfs({
                 '/tmp': {
                 }
@@ -548,11 +571,11 @@ describe('index', () => {
             });
             it('number of parts = concurrency', (done) => {
               const bytes = 33000000;
-              nockPart(8000000, 1, 5, bytes, 100);
-              nockPart(8000000, 2, 5, bytes, 200);
-              nockPart(8000000, 3, 5, bytes, 400);
-              nockPart(8000000, 4, 5, bytes, 100);
-              nockPart(1000000, 5, 5, bytes, 300);
+              nockPart(8000000, 1, 5, bytes, 's3.eu-west-1.amazonaws.com', 100);
+              nockPart(8000000, 2, 5, bytes, 's3.eu-west-1.amazonaws.com', 200);
+              nockPart(8000000, 3, 5, bytes, 's3.eu-west-1.amazonaws.com', 400);
+              nockPart(8000000, 4, 5, bytes, 's3.eu-west-1.amazonaws.com', 100);
+              nockPart(1000000, 5, 5, bytes, 's3.eu-west-1.amazonaws.com', 300);
               mockfs({
                 '/tmp': {
                 }
@@ -597,12 +620,12 @@ describe('index', () => {
             });
             it('number of parts > concurrency', (done) => {
               const bytes = 41000000;
-              nockPart(8000000, 1, 6, bytes, 100);
-              nockPart(8000000, 2, 6, bytes, 500);
-              nockPart(8000000, 3, 6, bytes, 400);
-              nockPart(8000000, 4, 6, bytes, 200);
-              nockPart(8000000, 5, 6, bytes, 300);
-              nockPart(1000000, 6, 6, bytes, 100);
+              nockPart(8000000, 1, 6, bytes, 's3.eu-west-1.amazonaws.com', 100);
+              nockPart(8000000, 2, 6, bytes, 's3.eu-west-1.amazonaws.com', 500);
+              nockPart(8000000, 3, 6, bytes, 's3.eu-west-1.amazonaws.com', 400);
+              nockPart(8000000, 4, 6, bytes, 's3.eu-west-1.amazonaws.com', 200);
+              nockPart(8000000, 5, 6, bytes, 's3.eu-west-1.amazonaws.com', 300);
+              nockPart(1000000, 6, 6, bytes, 's3.eu-west-1.amazonaws.com', 100);
               mockfs({
                 '/tmp': {
                 }
@@ -719,7 +742,7 @@ describe('index', () => {
             });
             it('happy', (done) => {
               const bytes = 1000000;
-              nockRange(0, 7999999, bytes);
+              nockRange(0, 7999999, bytes, 's3.eu-west-1.amazonaws.com');
               mockfs({
                 '/tmp': {
                 }
@@ -741,7 +764,7 @@ describe('index', () => {
             });
             it('abort', (done) => {
               const bytes = 1000000;
-              nockRange(0, 7999999, bytes, 200);
+              nockRange(0, 7999999, bytes, 's3.eu-west-1.amazonaws.com', 200);
               mockfs({
                 '/tmp': {
                 }
@@ -767,7 +790,7 @@ describe('index', () => {
           });
           it('object size = part size', (done) => {
             const bytes = 8000000;
-            nockRange(0, 7999999, bytes);
+            nockRange(0, 7999999, bytes, 's3.eu-west-1.amazonaws.com');
             mockfs({
               '/tmp': {
               }
@@ -790,9 +813,9 @@ describe('index', () => {
           describe('object size > part size', () => {
             it('last part size = part size', (done) => {
               const bytes = 24000000;
-              nockRange(0, 7999999, bytes);
-              nockRange(8000000, 15999999, bytes);
-              nockRange(16000000, 23999999, bytes);
+              nockRange(0, 7999999, bytes, 's3.eu-west-1.amazonaws.com');
+              nockRange(8000000, 15999999, bytes, 's3.eu-west-1.amazonaws.com');
+              nockRange(16000000, 23999999, bytes, 's3.eu-west-1.amazonaws.com');
               mockfs({
                 '/tmp': {
                 }
@@ -814,7 +837,7 @@ describe('index', () => {
             });
             it('download error', (done) => {
               const bytes = 24000000;
-              nockRange(0, 7999999, bytes);
+              nockRange(0, 7999999, bytes, 's3.eu-west-1.amazonaws.com');
               nock('https://s3.eu-west-1.amazonaws.com', {
                 reqheaders: {
                   range: 'bytes=8000000-15999999',
@@ -828,7 +851,7 @@ describe('index', () => {
                   versionId: 'version'
                 })
                 .reply(403);
-              nockRange(16000000, 23999999, bytes);
+              nockRange(16000000, 23999999, bytes, 's3.eu-west-1.amazonaws.com');
               mockfs({
                 '/tmp': {
                 }
@@ -850,9 +873,9 @@ describe('index', () => {
             });
             it('last part size < part size', (done) => {
               const bytes = 17000000;
-              nockRange(0, 7999999, bytes);
-              nockRange(8000000, 15999999, bytes);
-              nockRange(16000000, 16999999, bytes);
+              nockRange(0, 7999999, bytes, 's3.eu-west-1.amazonaws.com');
+              nockRange(8000000, 15999999, bytes, 's3.eu-west-1.amazonaws.com');
+              nockRange(16000000, 16999999, bytes, 's3.eu-west-1.amazonaws.com');
               mockfs({
                 '/tmp': {
                 }
@@ -874,9 +897,9 @@ describe('index', () => {
             });
             it('number of parts < concurrency', (done) => {
               const bytes = 17000000;
-              nockRange(0, 7999999, bytes, 100);
-              nockRange(8000000, 15999999, bytes, 100);
-              nockRange(16000000, 16999999, bytes, 200);
+              nockRange(0, 7999999, bytes, 's3.eu-west-1.amazonaws.com', 100);
+              nockRange(8000000, 15999999, bytes, 's3.eu-west-1.amazonaws.com', 100);
+              nockRange(16000000, 16999999, bytes, 's3.eu-west-1.amazonaws.com', 200);
               mockfs({
                 '/tmp': {
                 }
@@ -926,11 +949,11 @@ describe('index', () => {
             });
             it('number of parts = concurrency', (done) => {
               const bytes = 33000000;
-              nockRange(0, 7999999, bytes, 100);
-              nockRange(8000000, 15999999, bytes, 200);
-              nockRange(16000000, 23999999, bytes, 400);
-              nockRange(24000000, 31999999, bytes, 100);
-              nockRange(32000000, 32999999, bytes, 300);
+              nockRange(0, 7999999, bytes, 's3.eu-west-1.amazonaws.com', 100);
+              nockRange(8000000, 15999999, bytes, 's3.eu-west-1.amazonaws.com', 200);
+              nockRange(16000000, 23999999, bytes, 's3.eu-west-1.amazonaws.com', 400);
+              nockRange(24000000, 31999999, bytes, 's3.eu-west-1.amazonaws.com', 100);
+              nockRange(32000000, 32999999, bytes, 's3.eu-west-1.amazonaws.com', 300);
               mockfs({
                 '/tmp': {
                 }
@@ -975,12 +998,12 @@ describe('index', () => {
             });
             it('number of parts > concurrency', (done) => {
               const bytes = 41000000;
-              nockRange(0, 7999999, bytes, 100);
-              nockRange(8000000, 15999999, bytes, 500);
-              nockRange(16000000, 23999999, bytes, 400);
-              nockRange(24000000, 31999999, bytes, 200);
-              nockRange(32000000, 39999999, bytes, 300);
-              nockRange(40000000, 40999999, bytes, 100);
+              nockRange(0, 7999999, bytes, 's3.eu-west-1.amazonaws.com', 100);
+              nockRange(8000000, 15999999, bytes, 's3.eu-west-1.amazonaws.com', 500);
+              nockRange(16000000, 23999999, bytes, 's3.eu-west-1.amazonaws.com', 400);
+              nockRange(24000000, 31999999, bytes, 's3.eu-west-1.amazonaws.com', 200);
+              nockRange(32000000, 39999999, bytes, 's3.eu-west-1.amazonaws.com', 300);
+              nockRange(40000000, 40999999, bytes, 's3.eu-west-1.amazonaws.com', 100);
               mockfs({
                 '/tmp': {
                 }
@@ -1029,8 +1052,8 @@ describe('index', () => {
           describe('timeout', () => {
             it('recover', (done) => {
               const bytes = 33000000;
-              nockRange(0, 7999999, bytes);
-              nockRange(8000000, 15999999, bytes);
+              nockRange(0, 7999999, bytes, 's3.eu-west-1.amazonaws.com');
+              nockRange(8000000, 15999999, bytes, 's3.eu-west-1.amazonaws.com');
               nock('https://s3.eu-west-1.amazonaws.com', {
                 reqheaders: {
                   range: 'bytes=16000000-23999999',
@@ -1049,9 +1072,9 @@ describe('index', () => {
                   'Content-Length': '8000000',
                   'Content-Range': `bytes 16000000-23999999/${bytes}`
                 });
-              nockRange(16000000, 23999999, bytes);
-              nockRange(24000000, 31999999, bytes);
-              nockRange(32000000, 32999999, bytes);
+              nockRange(16000000, 23999999, bytes, 's3.eu-west-1.amazonaws.com');
+              nockRange(24000000, 31999999, bytes, 's3.eu-west-1.amazonaws.com');
+              nockRange(32000000, 32999999, bytes, 's3.eu-west-1.amazonaws.com');
               mockfs({
                 '/tmp': {
                 }
@@ -1074,8 +1097,8 @@ describe('index', () => {
             });
             it('too many retries', (done) => {
               const bytes = 33000000;
-              nockRange(0, 7999999, bytes);
-              nockRange(8000000, 15999999, bytes);
+              nockRange(0, 7999999, bytes, 's3.eu-west-1.amazonaws.com');
+              nockRange(8000000, 15999999, bytes, 's3.eu-west-1.amazonaws.com');
               nock('https://s3.eu-west-1.amazonaws.com', {
                 reqheaders: {
                   range: 'bytes=16000000-23999999',
@@ -1094,8 +1117,8 @@ describe('index', () => {
                   'Content-Length': '8000000',
                   'Content-Range': `bytes 16000000-23999999/${bytes}`
                 });
-              nockRange(24000000, 31999999, bytes);
-              nockRange(32000000, 32999999, bytes);
+              nockRange(24000000, 31999999, bytes, 's3.eu-west-1.amazonaws.com');
+              nockRange(32000000, 32999999, bytes, 's3.eu-west-1.amazonaws.com');
               mockfs({
                 '/tmp': {
                 }
@@ -1119,8 +1142,8 @@ describe('index', () => {
           describe('ECONNRESET', () => {
             it('recover', (done) => {
               const bytes = 33000000;
-              nockRange(0, 7999999, bytes);
-              nockRange(8000000, 15999999, bytes);
+              nockRange(0, 7999999, bytes, 's3.eu-west-1.amazonaws.com');
+              nockRange(8000000, 15999999, bytes, 's3.eu-west-1.amazonaws.com');
               nock('https://s3.eu-west-1.amazonaws.com', {
                 reqheaders: {
                   range: 'bytes=16000000-23999999',
@@ -1135,9 +1158,9 @@ describe('index', () => {
                 })
                 .times(4)
                 .replyWithError({code: 'ECONNRESET'});
-              nockRange(16000000, 23999999, bytes);
-              nockRange(24000000, 31999999, bytes);
-              nockRange(32000000, 32999999, bytes);
+              nockRange(16000000, 23999999, bytes, 's3.eu-west-1.amazonaws.com');
+              nockRange(24000000, 31999999, bytes, 's3.eu-west-1.amazonaws.com');
+              nockRange(32000000, 32999999, bytes, 's3.eu-west-1.amazonaws.com');
               mockfs({
                 '/tmp': {
                 }
@@ -1160,8 +1183,8 @@ describe('index', () => {
             });
             it('too many retries', (done) => {
               const bytes = 33000000;
-              nockRange(0, 7999999, bytes);
-              nockRange(8000000, 15999999, bytes);
+              nockRange(0, 7999999, bytes, 's3.eu-west-1.amazonaws.com');
+              nockRange(8000000, 15999999, bytes, 's3.eu-west-1.amazonaws.com');
               nock('https://s3.eu-west-1.amazonaws.com', {
                 reqheaders: {
                   range: 'bytes=16000000-23999999',
@@ -1176,8 +1199,8 @@ describe('index', () => {
                 })
                 .times(5)
                 .replyWithError({code: 'ECONNRESET'});
-              nockRange(24000000, 31999999, bytes);
-              nockRange(32000000, 32999999, bytes);
+              nockRange(24000000, 31999999, bytes, 's3.eu-west-1.amazonaws.com');
+              nockRange(32000000, 32999999, bytes, 's3.eu-west-1.amazonaws.com');
               mockfs({
                 '/tmp': {
                 }
@@ -1201,8 +1224,8 @@ describe('index', () => {
           describe('5XX', () => {
             it('recover', (done) => {
               const bytes = 33000000;
-              nockRange(0, 7999999, bytes);
-              nockRange(8000000, 15999999, bytes);
+              nockRange(0, 7999999, bytes, 's3.eu-west-1.amazonaws.com');
+              nockRange(8000000, 15999999, bytes, 's3.eu-west-1.amazonaws.com');
               nock('https://s3.eu-west-1.amazonaws.com', {
                 reqheaders: {
                   range: 'bytes=16000000-23999999',
@@ -1217,9 +1240,9 @@ describe('index', () => {
                 })
                 .times(4)
                 .reply(500);
-              nockRange(16000000, 23999999, bytes);
-              nockRange(24000000, 31999999, bytes);
-              nockRange(32000000, 32999999, bytes);
+              nockRange(16000000, 23999999, bytes, 's3.eu-west-1.amazonaws.com');
+              nockRange(24000000, 31999999, bytes, 's3.eu-west-1.amazonaws.com');
+              nockRange(32000000, 32999999, bytes, 's3.eu-west-1.amazonaws.com');
               mockfs({
                 '/tmp': {
                 }
@@ -1242,8 +1265,8 @@ describe('index', () => {
             });
             it('too many retries', (done) => {
               const bytes = 33000000;
-              nockRange(0, 7999999, bytes);
-              nockRange(8000000, 15999999, bytes);
+              nockRange(0, 7999999, bytes, 's3.eu-west-1.amazonaws.com');
+              nockRange(8000000, 15999999, bytes, 's3.eu-west-1.amazonaws.com');
               nock('https://s3.eu-west-1.amazonaws.com', {
                 reqheaders: {
                   range: 'bytes=16000000-23999999',
@@ -1258,8 +1281,8 @@ describe('index', () => {
                 })
                 .times(5)
                 .reply(500);
-              nockRange(24000000, 31999999, bytes);
-              nockRange(32000000, 32999999, bytes);
+              nockRange(24000000, 31999999, bytes, 's3.eu-west-1.amazonaws.com');
+              nockRange(32000000, 32999999, bytes, 's3.eu-west-1.amazonaws.com');
               mockfs({
                 '/tmp': {
                 }
@@ -1286,7 +1309,7 @@ describe('index', () => {
       describe('file', () => {
         it('happy', (done) => {
           const bytes = 1000000;
-          nockPart(1000000, 1, 1, bytes);
+          nockPart(1000000, 1, 1, bytes, 's3.eu-west-1.amazonaws.com');
           mockfs({
             '/tmp': {
             }
@@ -1304,7 +1327,7 @@ describe('index', () => {
         });
         it('abort', (done) => {
           const bytes = 1000000;
-          nockPart(1000000, 1, 1, bytes, 200);
+          nockPart(1000000, 1, 1, bytes, 's3.eu-west-1.amazonaws.com', 200);
           mockfs({
             '/tmp': {
             }
@@ -1327,7 +1350,7 @@ describe('index', () => {
       describe('meta', () => {
         it('happy', (done) => {
           const bytes = 1000000;
-          nockPart(1000000, 1, 1, bytes);
+          nockPart(1000000, 1, 1, bytes, 's3.eu-west-1.amazonaws.com');
           mockfs({
             '/tmp': {
             }
@@ -1371,7 +1394,7 @@ describe('index', () => {
       describe('readStream', () => {
         it('happy', (done) => {
           const bytes = 8000000;
-          nockRange(0, 7999999, bytes);
+          nockRange(0, 7999999, bytes, 's3.eu-west-1.amazonaws.com');
           mockfs({
             '/tmp': {
             }
@@ -1410,7 +1433,7 @@ describe('index', () => {
       describe('readStream', () => {
         it('happy', (done) => {
           const bytes = 8000000;
-          nockRange(0, 7999999, bytes);
+          nockRange(0, 7999999, bytes, 's3.eu-west-1.amazonaws.com');
           mockfs({
             '/tmp': {
             }

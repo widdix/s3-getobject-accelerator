@@ -87,6 +87,7 @@ d.meta((err, metadata) => {
   * `concurrency` `<number>`
   * `connectionTimeoutInMilliseconds` `<number>` (optional, defaults to 3000)
   * `v2AwsSdkCredentials` `<AWS.Credentials>` (optional)
+  * `endpointHostname` `<string>` (optional, defaults to s3.${region}.amazonaws.com)
 * Returns:
   * `meta(cb)` `<Function>` Get meta-data before starting the download (downloads the first part and keeps the body in memory until download starts)
     * `cb(err, metadata)` `<Function>`
