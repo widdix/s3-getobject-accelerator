@@ -89,6 +89,20 @@ function nockImds() {
 }
 
 describe('index', () => {
+  it('real', (done) => {
+    request(http, {
+      hostname: 'google.com',
+      method: 'GET',
+      path: '/'
+    }, null, (err, res) => {
+      if (err) {
+        done(err);
+      } else {
+        assert.deepStrictEqual(res.statusCode, 301);
+        done();
+      }
+    });
+  });
   describe('request', () => {
     before(() => {
       nock.disableNetConnect();
