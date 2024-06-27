@@ -129,10 +129,12 @@ function retryrequest(nodemodule, requestOptions, body, retryOptions, cb) {
           if (res.headers['content-type'] === 'application/xml') {
             const err = new Error(`status code: ${res.statusCode}\n${body.toString('utf8')}`);
             err.statusCode = res.statusCode;
+            err.body = body;
             retry(err);
           } else {
             const err = new Error(`status code: ${res.statusCode}, content-type: ${res.headers['content-type']}`);
             err.statusCode = res.statusCode;
+            err.body = body;
             retry(err);
           }
         } else {
@@ -162,6 +164,7 @@ function imdsRequest(method, path, headers, timeout, cb) {
       } else {
         const err = new Error(`unexpected IMDS status code: ${res.statusCode}.\n${body.toString('utf8')}`);
         err.statusCode = res.statusCode;
+        err.body = body;
         cb(err);
       }
     }
@@ -461,13 +464,15 @@ function getObject({Bucket, Key, VersionId, PartNumber, Range}, {timeout, v2AwsS
                       cb(err);
                     } else {
                       if (result.Error && result.Error.Code && result.Error.Message) {
-                        const e = new Error(`${result.Error.Code}: ${result.Error.Message}`);
-                        e.code = result.Error.Code;
-                        e.statusCode = res.statusCode;
-                        cb(e);
+                        const err = new Error(`${result.Error.Code}: ${result.Error.Message}`);
+                        err.statusCode = res.statusCode;
+                        err.body = body;
+                        err.code = result.Error.Code;
+                        cb(err);
                       } else {
                         const err = new Error(`unexpected S3 XML response (${res.statusCode}):\n${body.toString('utf8')}`);
                         err.statusCode = res.statusCode;
+                        err.body = body;
                         cb(err);
                       }
                     }
@@ -475,6 +480,7 @@ function getObject({Bucket, Key, VersionId, PartNumber, Range}, {timeout, v2AwsS
                 } else {
                   const err = new Error(`unexpected S3 response (${res.statusCode}, ${res.headers['content-type']})`);
                   err.statusCode = res.statusCode;
+                  err.body = body;
                   cb(err);
                 }
               }
