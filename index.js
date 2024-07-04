@@ -405,7 +405,7 @@ function escapeKey(string) { // source https://github.com/aws/aws-sdk-js/blob/64
     });
 }
 
-function getObject({Bucket, Key, VersionId, PartNumber, Range}, {timeout, v2AwsSdkCredentials, endpointHostname}, cb) {
+function getObject({Bucket, Key, VersionId, PartNumber, Range}, {timeout, v2AwsSdkCredentials, endpointHostname, agent}, cb) {
   const ac = new AbortController();
   const qs = {};
   const headers = {};
@@ -433,7 +433,8 @@ function getObject({Bucket, Key, VersionId, PartNumber, Range}, {timeout, v2AwsS
             headers,
             service: 's3',
             signal: ac.signal,
-            timeout
+            timeout,
+            agent
           }, credentials);
           retryrequest(https, options, undefined, {maxAttempts: 5}, (err, res, body) => {
             if (err) {
@@ -493,7 +494,7 @@ function getObject({Bucket, Key, VersionId, PartNumber, Range}, {timeout, v2AwsS
   return ac;
 }
 
-exports.download = ({bucket, key, version}, {partSizeInMegabytes, concurrency, connectionTimeoutInMilliseconds, v2AwsSdkCredentials, endpointHostname}) => {
+exports.download = ({bucket, key, version}, {partSizeInMegabytes, concurrency, connectionTimeoutInMilliseconds, v2AwsSdkCredentials, endpointHostname, agent}) => {
   if (concurrency < 1) {
     throw new Error('concurrency > 0');
   }
@@ -572,7 +573,7 @@ exports.download = ({bucket, key, version}, {partSizeInMegabytes, concurrency, c
       const endByte = Math.min(startByte+partSizeInBytes-1, bytesToDownload-1); // inclusive
       params.Range = `bytes=${startByte}-${endByte}`;
     }
-    const req = getObject(params, {timeout, v2AwsSdkCredentials, endpointHostname}, (err, data) => {
+    const req = getObject(params, {timeout, v2AwsSdkCredentials, endpointHostname, agent}, (err, data) => {
       delete partsDownloading[partNo];
       if (err) {
         cb(err);
@@ -623,7 +624,7 @@ exports.download = ({bucket, key, version}, {partSizeInMegabytes, concurrency, c
           const endByte = partSizeInBytes-1; // inclusive
           params.Range = `bytes=0-${endByte}`;
         }
-        partsDownloading[1] = getObject(params, {timeout, v2AwsSdkCredentials, endpointHostname}, (err, data) => {
+        partsDownloading[1] = getObject(params, {timeout, v2AwsSdkCredentials, endpointHostname, agent}, (err, data) => {
           delete partsDownloading[1];
           if (err) {
             if (err.code === 'InvalidRange') {
