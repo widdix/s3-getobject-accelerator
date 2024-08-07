@@ -22,7 +22,48 @@ const EVENT_NAMES = [
 ];
 exports.EVENT_NAMES = EVENT_NAMES;
 
+class RequestTimeoutError extends Error {
+  constructor(message) {
+    super(message);
+    this.name = 'RequestTimeoutError';
+  }
+}
+exports.RequestTimeoutError = RequestTimeoutError;
+
+class ConnectionTimeoutError extends Error {
+  constructor(message) {
+    super(message);
+    this.name = 'ConnectionTimeoutError';
+  }
+}
+exports.ConnectionTimeoutError = ConnectionTimeoutError;
+
+class ReadTimeoutError extends Error {
+  constructor(message) {
+    super(message);
+    this.name = 'ReadTimeoutError';
+  }
+}
+exports.ReadTimeoutError = ReadTimeoutError;
+
+class DataTimeoutError extends Error {
+  constructor(message) {
+    super(message);
+    this.name = 'DataTimeoutError';
+  }
+}
+exports.DataTimeoutError = DataTimeoutError;
+
+class WriteTimeoutError extends Error {
+  constructor(message) {
+    super(message);
+    this.name = 'WriteTimeoutError';
+  }
+}
+exports.WriteTimeoutError = WriteTimeoutError;
+
 const RETRIABLE_NETWORK_ERROR_CODES = ['ECONNRESET', 'ENOTFOUND', 'ESOCKETTIMEDOUT', 'ETIMEDOUT', 'ECONNREFUSED', 'EHOSTUNREACH', 'EPIPE', 'EAI_AGAIN', 'EBUSY'];
+const RETRIABLE_ERROR_NAMES = ['ConnectionTimeoutError', 'ReadTimeoutError', 'DataTimeoutError', 'WriteTimeoutError'];
 
 const AWS_CREDENTIALS_MAX_AGE_IN_MILLISECONDS = 4*60*1000; // From AWS docs: We make new credentials available at least five minutes before the expiration of the old credentials.
 const DNS_RECORD_MAX_AGE_IN_MILLISECONDS = 10*1000;
@@ -57,14 +98,45 @@ function parseContentRange(contentRange) {
   }
 }
 
-function request(nodemodule, options, body, cb) {
-  options.lookup = getDnsCache;
-  const req = nodemodule.request(options, (res) => {
+function request(nodemodule, requestOptions, body, timeoutOptions, cb) {
+  requestOptions.lookup = getDnsCache;
+  if (timeoutOptions.connectionTimeoutInMilliseconds > 0) {
+    requestOptions.timeout = timeoutOptions.connectionTimeoutInMilliseconds;
+  }
+  let requestTimeoutId;
+  let dataTimeoutId;
+  let readTimeoutId;
+  let writeTimeoutId;
+  let cbcalled = false;
+  const clearTimeouts = () => {
+    clearTimeout(requestTimeoutId);
+    clearTimeout(dataTimeoutId);
+    clearTimeout(readTimeoutId);
+    clearTimeout(writeTimeoutId);
+  };
+  const req = nodemodule.request(requestOptions, (res) => {
+    if (timeoutOptions.readTimeoutInMilliseconds > 0) {
+      readTimeoutId = setTimeout(() => {
+        clearTimeouts();
+        res.destroy(new ReadTimeoutError());
+      }, timeoutOptions.readTimeoutInMilliseconds);
+    }
     let size = ('content-length' in res.headers) ? parseInt(res.headers['content-length'], 10) : 0;
     const bodyChunks = ('content-length' in res.headers) ? null : [];
     const bodyBuffer = ('content-length' in res.headers) ? Buffer.allocUnsafe(size) : null;
     let bodyBufferOffset = 0;
+    const resetDataTimeout = () => {
+      if (timeoutOptions.dataTimeoutInMilliseconds > 0) {
+        clearTimeout(dataTimeoutId);
+        dataTimeoutId = setTimeout(() => {
+          clearTimeouts();
+          res.destroy(new DataTimeoutError());
+        }, timeoutOptions.dataTimeoutInMilliseconds);
+      }
+    };
+    resetDataTimeout();
     res.on('data', chunk => {
+      resetDataTimeout();
       if (bodyChunks !== null) {
         bodyChunks.push(chunk);
         size += chunk.length;
@@ -74,27 +146,49 @@ function request(nodemodule, options, body, cb) {
       }
     });
     res.on('end', () => {
-      if (bodyChunks !== null) {
-        cb(null, res, Buffer.concat(bodyChunks));
-      } else {
-        cb(null, res, bodyBuffer);
+      clearTimeouts();
+      if (cbcalled === false) {
+        cbcalled = true;
+        if (bodyChunks !== null) {
+          cb(null, res, Buffer.concat(bodyChunks));
+        } else {
+          cb(null, res, bodyBuffer);
+        }
       }
     });
   });
   req.once('error', (err) => {
-    cb(err);
+    clearTimeouts();
+    if (cbcalled === false) {
+      cbcalled = true;
+      cb(err);
+    }
   });
   req.once('timeout', () => {
-    req.abort();
+    clearTimeouts();
+    req.destroy(new ConnectionTimeoutError());
   });
-  if (Buffer.isBuffer(body)) {
-    req.write(body);
+  if (timeoutOptions.requestTimeoutInMilliseconds > 0) {
+    requestTimeoutId = setTimeout(() => {
+      req.destroy(new RequestTimeoutError());
+    }, timeoutOptions.requestTimeoutInMilliseconds);
+  }
+  if (Buffer.isBuffer(body) && body.length > 0) {
+    if (timeoutOptions.writeTimeoutInMilliseconds > 0) {
+      writeTimeoutId = setTimeout(() => {
+        clearTimeouts();
+        req.destroy(new WriteTimeoutError());
+      }, timeoutOptions.writeTimeoutInMilliseconds);
+    }
+    req.write(body, () => {
+      clearTimeout(writeTimeoutId);
+    });
   }
   req.end();
 }
 exports.request = request;
 
-function retryrequest(nodemodule, requestOptions, body, retryOptions, cb) {
+function retryrequest(nodemodule, requestOptions, body, retryOptions, timeoutOptions, cb) {
   let attempt = 1;
   const retry = (err) => {
     attempt++;
@@ -117,9 +211,9 @@ function retryrequest(nodemodule, requestOptions, body, retryOptions, cb) {
     }
   };
   const req = () => {
-    request(nodemodule, requestOptions, body, (err, res, body) => {
+    request(nodemodule, requestOptions, body, timeoutOptions, (err, res, body) => {
       if (err) {
-        if (RETRIABLE_NETWORK_ERROR_CODES.includes(err.code)) {
+        if (RETRIABLE_NETWORK_ERROR_CODES.includes(err.code) || RETRIABLE_ERROR_NAMES.includes(err.name)) {
           retry(err);
         } else {
           cb(err);
@@ -147,15 +241,14 @@ function retryrequest(nodemodule, requestOptions, body, retryOptions, cb) {
 }
 exports.retryrequest = retryrequest;
 
-function imdsRequest(method, path, headers, timeout, cb) {
+function imdsRequest(method, path, headers, timeoutOptions, cb) {
   const options = {
     hostname: '169.254.169.254',
     method,
     path,
-    headers,
-    timeout
+    headers
   };
-  retryrequest(http, options, undefined, {maxAttempts: 3}, (err, res, body) => {
+  retryrequest(http, options, undefined, {maxAttempts: 3}, timeoutOptions, (err, res, body) => {
     if (err) {
       cb(err);
     } else {
@@ -171,9 +264,9 @@ function imdsRequest(method, path, headers, timeout, cb) {
   });
 }
 
-function refreshImdsToken(timeout) {
+function refreshImdsToken(timeoutOptions) {
   imdsTokenCache = new Promise((resolve, reject) => {
-    imdsRequest('PUT', '/latest/api/token', {'X-aws-ec2-metadata-token-ttl-seconds': `${IMDS_TOKEN_TTL_IN_SECONDS}`}, timeout, (err, token) => {
+    imdsRequest('PUT', '/latest/api/token', {'X-aws-ec2-metadata-token-ttl-seconds': `${IMDS_TOKEN_TTL_IN_SECONDS}`}, timeoutOptions, (err, token) => {
       if (err) {
         reject(err);
       } else {
@@ -187,14 +280,14 @@ function refreshImdsToken(timeout) {
   return imdsTokenCache;
 }
 
-function getImdsToken(timeout, cb) {
+function getImdsToken(timeoutOptions, cb) {
   if (imdsTokenCache === undefined) {
-    refreshImdsToken(timeout).then(({token}) => cb(null, token)).catch(cb);
+    refreshImdsToken(timeoutOptions).then(({token}) => cb(null, token)).catch(cb);
   } else {
     imdsTokenCache.then(({token, cachedAt}) => {
       if ((Date.now()-cachedAt) > IMDS_TOKEN_MAX_AGE_IN_MILLISECONDS) {
         imdsTokenCache = undefined;
-        getImdsToken(timeout, cb);
+        getImdsToken(timeoutOptions, cb);
       } else {
         cb(null, token);
       }
@@ -202,23 +295,31 @@ function getImdsToken(timeout, cb) {
   }
 }
 
-function imds(path, timeout, cb) {
-  getImdsToken(timeout, (err, token) => {
+function imds(path, timeoutOptions, cb) {
+  getImdsToken(timeoutOptions, (err, token) => {
     if (err) {
       cb(err);
     } else {
-      imdsRequest('GET', path, {'X-aws-ec2-metadata-token': token}, timeout, cb);
+      imdsRequest('GET', path, {'X-aws-ec2-metadata-token': token}, timeoutOptions, cb);
     }
   });
 }
 exports.imds = imds;
 
-function refreshAwsRegion(timeout) {
+const DEFAULT_IMDS_TIMEOUT_OPTIONS = {
+  requestTimeoutInMilliseconds: 3000,
+  connectionTimeoutInMilliseconds: 1000,
+  readTimeoutInMilliseconds: 1000,
+  dataTimeoutInMilliseconds: 1000,
+  writeTimeoutInMilliseconds: 1000
+};
+
+function refreshAwsRegion() {
   imdsRegionCache = new Promise((resolve, reject) => {
     if ('AWS_REGION' in process.env) {
       resolve(process.env.AWS_REGION);
     } else {
-      imds('/latest/dynamic/instance-identity/document', timeout, (err, body) => {
+      imds('/latest/dynamic/instance-identity/document', DEFAULT_IMDS_TIMEOUT_OPTIONS, (err, body) => {
         if (err) {
           reject(err);
         } else {
@@ -231,15 +332,15 @@ function refreshAwsRegion(timeout) {
   return imdsRegionCache;
 }
 
-function getAwsRegion(timeout, cb) {
+function getAwsRegion(cb) {
   if (imdsRegionCache === undefined) {
-    refreshAwsRegion(timeout).then(region => cb(null, region)).catch(cb);
+    refreshAwsRegion().then(region => cb(null, region)).catch(cb);
   } else {
     imdsRegionCache.then(region => cb(null, region)).catch(cb);
   }
 }
 
-function refreshAwsCredentials(timeout) {
+function refreshAwsCredentials() {
   imdsCredentialsCache = new Promise((resolve, reject) => {
     if ('AWS_ACCESS_KEY_ID' in process.env && 'AWS_SECRET_ACCESS_KEY' in process.env) {
       const credentials = {
@@ -251,12 +352,12 @@ function refreshAwsCredentials(timeout) {
       }
       resolve(credentials);
     } else {
-      imds('/latest/meta-data/iam/security-credentials/', timeout, (err, body) => {
+      imds('/latest/meta-data/iam/security-credentials/', DEFAULT_IMDS_TIMEOUT_OPTIONS, (err, body) => {
         if (err) {
           reject(err);
         } else {
           const roleName = body.trim();
-          imds(`/latest/meta-data/iam/security-credentials/${roleName}`, timeout, (err, body) => {
+          imds(`/latest/meta-data/iam/security-credentials/${roleName}`, DEFAULT_IMDS_TIMEOUT_OPTIONS, (err, body) => {
             if (err) {
               reject(err);
             } else {
@@ -276,7 +377,7 @@ function refreshAwsCredentials(timeout) {
   return imdsCredentialsCache;
 }
 
-function getAwsCredentials({timeout, v2AwsSdkCredentials}, cb) {
+function getAwsCredentials(v2AwsSdkCredentials, cb) {
   if (!(v2AwsSdkCredentials === undefined || v2AwsSdkCredentials === null)) {
     v2AwsSdkCredentials.get((err) => {
       if (err) {
@@ -293,12 +394,12 @@ function getAwsCredentials({timeout, v2AwsSdkCredentials}, cb) {
       }
     });
   } else if (imdsCredentialsCache === undefined) {
-    refreshAwsCredentials(timeout).then(credentials => cb(null, credentials)).catch(cb);
+    refreshAwsCredentials().then(credentials => cb(null, credentials)).catch(cb);
   } else {
     imdsCredentialsCache.then(credentials => {
       if ((Date.now()-credentials.cachedAt) > AWS_CREDENTIALS_MAX_AGE_IN_MILLISECONDS) {
         imdsCredentialsCache = undefined;
-        getAwsCredentials({timeout, v2AwsSdkCredentials}, cb);
+        getAwsCredentials(v2AwsSdkCredentials, cb);
       } else {
         cb(null, credentials);
       }
@@ -359,10 +460,10 @@ function getDnsCache(hostname, options, cb) {
   }
 }
 
-function getHostname(timeout, endpointHostname, cb) {
+function getHostname(endpointHostname, cb) {
   if (endpointHostname === undefined || endpointHostname === null) {
     // TODO Switch to virtual-hosted–style requests as soon as bucket names with a dot are supported (https://docs.aws.amazon.com/AmazonS3/latest/userguide/VirtualHosting.html)
-    getAwsRegion(timeout, (err, region) => {
+    getAwsRegion((err, region) => {
       if (err) {
         cb(err);
       } else {
@@ -372,19 +473,6 @@ function getHostname(timeout, endpointHostname, cb) {
   } else {
     cb(null, endpointHostname);
   }
-}
-
-function mapTimeout(connectionTimeoutInMilliseconds) {
-  if (connectionTimeoutInMilliseconds === undefined || connectionTimeoutInMilliseconds === null) {
-    return 3000;
-  }
-  if (connectionTimeoutInMilliseconds < 0) {
-    throw new Error('connectionTimeoutInMilliseconds >= 0');
-  }
-  if (connectionTimeoutInMilliseconds === 0) {
-    return undefined;
-  }
-  return connectionTimeoutInMilliseconds;
 }
 
 function mapPartSizeInBytes(partSizeInMegabytes) {
@@ -405,7 +493,7 @@ function escapeKey(string) { // source https://github.com/aws/aws-sdk-js/blob/64
     });
 }
 
-function getObject({Bucket, Key, VersionId, PartNumber, Range}, {timeout, v2AwsSdkCredentials, endpointHostname, agent}, cb) {
+function getObject({Bucket, Key, VersionId, PartNumber, Range}, {requestTimeoutInMilliseconds, connectionTimeoutInMilliseconds, readTimeoutInMilliseconds, dataTimeoutInMilliseconds, writeTimeoutInMilliseconds, v2AwsSdkCredentials, endpointHostname, agent}, cb) {
   const ac = new AbortController();
   const qs = {};
   const headers = {};
@@ -418,11 +506,11 @@ function getObject({Bucket, Key, VersionId, PartNumber, Range}, {timeout, v2AwsS
   if (Range !== undefined && Range !== null) {
     headers.Range = Range;
   }
-  getHostname(timeout, endpointHostname, (err, hostname) => {
+  getHostname(endpointHostname, (err, hostname) => {
     if (err) {
       cb(err);
     } else {
-      getAwsCredentials({timeout, v2AwsSdkCredentials}, (err, credentials) => {
+      getAwsCredentials(v2AwsSdkCredentials, (err, credentials) => {
         if (err) {
           cb(err);
         } else {
@@ -433,10 +521,9 @@ function getObject({Bucket, Key, VersionId, PartNumber, Range}, {timeout, v2AwsS
             headers,
             service: 's3',
             signal: ac.signal,
-            timeout,
             agent
           }, credentials);
-          retryrequest(https, options, undefined, {maxAttempts: 5}, (err, res, body) => {
+          retryrequest(https, options, undefined, {maxAttempts: 5}, {requestTimeoutInMilliseconds, connectionTimeoutInMilliseconds, readTimeoutInMilliseconds, dataTimeoutInMilliseconds, writeTimeoutInMilliseconds}, (err, res, body) => {
             if (err) {
               cb(err);
             } else {
@@ -494,16 +581,46 @@ function getObject({Bucket, Key, VersionId, PartNumber, Range}, {timeout, v2AwsS
   return ac;
 }
 
-exports.download = ({bucket, key, version}, {partSizeInMegabytes, concurrency, connectionTimeoutInMilliseconds, v2AwsSdkCredentials, endpointHostname, agent}) => {
+exports.download = ({bucket, key, version}, {partSizeInMegabytes, concurrency, requestTimeoutInMilliseconds, connectionTimeoutInMilliseconds, readTimeoutInMilliseconds, dataTimeoutInMilliseconds, writeTimeoutInMilliseconds, v2AwsSdkCredentials, endpointHostname, agent}) => {
   if (concurrency < 1) {
     throw new Error('concurrency > 0');
   }
+
+  if (requestTimeoutInMilliseconds === undefined || requestTimeoutInMilliseconds === null) {
+    requestTimeoutInMilliseconds = 300000;
+  } else if (requestTimeoutInMilliseconds < 0) {
+    throw new Error('requestTimeoutInMilliseconds >= 0');
+  }
+
+  if (connectionTimeoutInMilliseconds === undefined || connectionTimeoutInMilliseconds === null) {
+    connectionTimeoutInMilliseconds = 3000;
+  } else if (connectionTimeoutInMilliseconds < 0) {
+    throw new Error('connectionTimeoutInMilliseconds >= 0');
+  }
+
+  if (readTimeoutInMilliseconds === undefined || readTimeoutInMilliseconds === null) {
+    readTimeoutInMilliseconds = 300000;
+  } else if (readTimeoutInMilliseconds < 0) {
+    throw new Error('readTimeoutInMilliseconds >= 0');
+  }
+
+  if (dataTimeoutInMilliseconds === undefined || dataTimeoutInMilliseconds === null) {
+    dataTimeoutInMilliseconds = 3000;
+  } else if (dataTimeoutInMilliseconds < 0) {
+    throw new Error('dataTimeoutInMilliseconds >= 0');
+  }
+
+  if (writeTimeoutInMilliseconds === undefined || writeTimeoutInMilliseconds === null) {
+    writeTimeoutInMilliseconds = 300000;
+  } else if (writeTimeoutInMilliseconds < 0) {
+    throw new Error('writeTimeoutInMilliseconds >= 0');
+  }
+
   if (!(v2AwsSdkCredentials === undefined || v2AwsSdkCredentials === null)) {
     if (typeof v2AwsSdkCredentials.get !== 'function') {
       throw new Error('invalid v2AwsSdkCredentials');
     }
   }
-  const timeout = mapTimeout(connectionTimeoutInMilliseconds);
 
   const emitter = new EventEmitter();
   const partSizeInBytes = mapPartSizeInBytes(partSizeInMegabytes);
@@ -573,7 +690,7 @@ exports.download = ({bucket, key, version}, {partSizeInMegabytes, concurrency, c
       const endByte = Math.min(startByte+partSizeInBytes-1, bytesToDownload-1); // inclusive
       params.Range = `bytes=${startByte}-${endByte}`;
     }
-    const req = getObject(params, {timeout, v2AwsSdkCredentials, endpointHostname, agent}, (err, data) => {
+    const req = getObject(params, {requestTimeoutInMilliseconds, connectionTimeoutInMilliseconds, readTimeoutInMilliseconds, dataTimeoutInMilliseconds, writeTimeoutInMilliseconds, v2AwsSdkCredentials, endpointHostname, agent}, (err, data) => {
       delete partsDownloading[partNo];
       if (err) {
         cb(err);
@@ -624,7 +741,7 @@ exports.download = ({bucket, key, version}, {partSizeInMegabytes, concurrency, c
           const endByte = partSizeInBytes-1; // inclusive
           params.Range = `bytes=0-${endByte}`;
         }
-        partsDownloading[1] = getObject(params, {timeout, v2AwsSdkCredentials, endpointHostname, agent}, (err, data) => {
+        partsDownloading[1] = getObject(params, {requestTimeoutInMilliseconds, connectionTimeoutInMilliseconds, readTimeoutInMilliseconds, dataTimeoutInMilliseconds, writeTimeoutInMilliseconds, v2AwsSdkCredentials, endpointHostname, agent}, (err, data) => {
           delete partsDownloading[1];
           if (err) {
             if (err.code === 'InvalidRange') {

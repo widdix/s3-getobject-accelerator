@@ -5,7 +5,7 @@ const fs = require('node:fs');
 const mockfs = require('mock-fs');
 const nock = require('nock');
 const AWS = require('aws-sdk');
-const {clearCache, request, imds, download} = require('../index.js');
+const {clearCache, request, retryrequest, imds, download} = require('../index.js');
 
 function nockPart(partSize, partNumber, parts, bytes, hostname, optionalTimeout) {
   console.log(`nockPart(${partSize}, ${partNumber}, ${parts}, ${bytes}, ${hostname}, ${optionalTimeout})`);
@@ -94,7 +94,7 @@ describe('index', () => {
       hostname: 'google.com',
       method: 'GET',
       path: '/'
-    }, null, (err, res) => {
+    }, null, {}, (err, res) => {
       if (err) {
         done(err);
       } else {
@@ -115,12 +115,12 @@ describe('index', () => {
     it('with content-length = 0', (done) => {
       nock('http://localhost')
         .get('/test')
-        .reply(204, '', {'Content-Type': 'application/text', 'Content-Length': '0'});
+        .reply(200, '', {'Content-Type': 'application/text', 'Content-Length': '0'});
       request(http, {
         hostname: 'localhost',
         method: 'GET',
         path: '/test'
-      }, null, (err, res, body) => {
+      }, null, {}, (err, res, body) => {
         if (err) {
           done(err);
         } else {
@@ -137,11 +137,28 @@ describe('index', () => {
         hostname: 'localhost',
         method: 'GET',
         path: '/test'
-      }, null, (err, res, body) => {
+      }, null, {}, (err, res, body) => {
         if (err) {
           done(err);
         } else {
           assert.deepStrictEqual(body.toString('utf8'), 'Hello world!');
+          done();
+        }
+      });
+    });
+    it('with content-length < than real response body', (done) => {
+      nock('http://localhost')
+        .get('/test')
+        .reply(200, 'Hello world!', {'Content-Type': 'application/text', 'Content-Length': '11'});
+      request(http, {
+        hostname: 'localhost',
+        method: 'GET',
+        path: '/test'
+      }, null, {}, (err, res, body) => {
+        if (err) {
+          done(err);
+        } else {
+          assert.deepStrictEqual(body.toString('utf8'), 'Hello world');
           done();
         }
       });
@@ -154,7 +171,7 @@ describe('index', () => {
         hostname: 'localhost',
         method: 'GET',
         path: '/test'
-      }, null, (err, res, body) => {
+      }, null, {}, (err, res, body) => {
         if (err) {
           done(err);
         } else {
@@ -163,8 +180,202 @@ describe('index', () => {
         }
       });
     });
+    it('without response body', (done) => {
+      nock('http://localhost')
+        .get('/test')
+        .reply(204);
+      request(http, {
+        hostname: 'localhost',
+        method: 'GET',
+        path: '/test'
+      }, null, {}, (err, res, body) => {
+        if (err) {
+          done(err);
+        } else {
+          assert.deepStrictEqual(body.toString('utf8'), '');
+          done();
+        }
+      });
+    });
+    describe('timeout', () => {
+      it('request', (done) => {
+        nock('http://localhost')
+          .post('/api')
+          .delayBody(200)
+          .reply(204);
+
+        request(http, {
+          hostname: 'localhost',
+          method: 'POST',
+          path: '/api'
+        }, Buffer.alloc(10), {requestTimeoutInMilliseconds: 100, connectionTimeoutInMilliseconds: 0, readTimeoutInMilliseconds: 0, dataTimeoutInMilliseconds: 0, writeTimeoutInMilliseconds: 0}, (err) => {
+          if (err) {
+            assert.ok(nock.isDone());
+            assert.deepStrictEqual(err.name, 'RequestTimeoutError');
+            done();
+          } else {
+            assert.fail();
+          }
+        });
+      });
+      it('connection', (done) => {
+        nock('http://localhost')
+          .post('/api')
+          .delayConnection(200)
+          .reply(204);
+
+        request(http, {
+          hostname: 'localhost',
+          method: 'POST',
+          path: '/api'
+        }, Buffer.alloc(10), {requestTimeoutInMilliseconds: 0, connectionTimeoutInMilliseconds: 100, readTimeoutInMilliseconds: 0, dataTimeoutInMilliseconds: 0, writeTimeoutInMilliseconds: 0}, (err) => {
+          if (err) {
+            assert.ok(nock.isDone());
+            assert.deepStrictEqual(err.name, 'ConnectionTimeoutError');
+            done();
+          } else {
+            assert.fail();
+          }
+        });
+      });
+      it('read', (done) => {
+        nock('http://localhost')
+          .get('/test')
+          .delayBody(200)
+          .reply(200, 'Hello world!', {'Content-Type': 'application/text', 'Content-Length': '12'});
+        request(http, {
+          hostname: 'localhost',
+          method: 'GET',
+          path: '/test'
+        }, null, {requestTimeoutInMilliseconds: 0, connectionTimeoutInMilliseconds: 0, readTimeoutInMilliseconds: 100, dataTimeoutInMilliseconds: 0, writeTimeoutInMilliseconds: 0}, (err) => {
+          if (err) {
+            assert.ok(nock.isDone());
+            assert.deepStrictEqual(err.name, 'ReadTimeoutError');
+            done();
+          } else {
+            assert.fail();
+          }
+        });
+      });
+      it('data', (done) => {
+        nock('http://localhost')
+          .get('/test')
+          .delayBody(200)
+          .reply(200, 'Hello world!', {'Content-Type': 'application/text', 'Content-Length': '12'});
+        request(http, {
+          hostname: 'localhost',
+          method: 'GET',
+          path: '/test'
+        }, null, {requestTimeoutInMilliseconds: 0, connectionTimeoutInMilliseconds: 100, readTimeoutInMilliseconds: 0, dataTimeoutInMilliseconds: 100, writeTimeoutInMilliseconds: 0}, (err) => {
+          if (err) {
+            assert.ok(nock.isDone());
+            assert.deepStrictEqual(err.name, 'DataTimeoutError');
+            done();
+          } else {
+            assert.fail();
+          }
+        });
+      });
+      // it('write', () => {}); // not testable with nock
+    });
   });
-  // TODO test retryrequest
+  describe('retryrequest', () => {
+    before(() => {
+      nock.disableNetConnect();
+    });
+    after(() => {
+      nock.enableNetConnect();
+    });
+    afterEach(() => {
+      nock.cleanAll();
+      clearCache();
+    });
+    it('body', (done) => {
+      const responseBody = 'test';
+      nock('http://localhost')
+        .post('/api')
+        .reply(200, responseBody, {'content-length': Buffer.byteLength(responseBody, 'utf8')});
+
+      retryrequest(http, {
+        hostname: 'localhost',
+        method: 'POST',
+        path: '/api'
+      }, Buffer.alloc(10), {maxAttempts: 3}, {}, (err, res, body) => {
+        if (err) {
+          done(err);
+        } else {
+          assert.ok(nock.isDone());
+          assert.deepStrictEqual(res.statusCode, 200);
+          assert.deepStrictEqual(body.length, 4);
+          done();
+        }
+      });
+    });
+    it('no body', (done) => {
+      nock('http://localhost')
+        .post('/api')
+        .reply(204);
+
+      retryrequest(http, {
+        hostname: 'localhost',
+        method: 'POST',
+        path: '/api'
+      }, Buffer.alloc(10), {maxAttempts: 3}, {}, (err, res, body) => {
+        if (err) {
+          done(err);
+        } else {
+          assert.ok(nock.isDone());
+          assert.deepStrictEqual(res.statusCode, 204);
+          assert.deepStrictEqual(body.length, 0);
+          done();
+        }
+      });
+    });
+    describe('timeout', () => {
+      it('connection', (done) => {
+        nock('http://localhost')
+          .post('/api')
+          .times(3)
+          .delayConnection(200)
+          .reply(204);
+
+        retryrequest(http, {
+          hostname: 'localhost',
+          method: 'POST',
+          path: '/api'
+        }, Buffer.alloc(10), {maxAttempts: 3}, {connectionTimeoutInMilliseconds: 100}, (err) => {
+          if (err) {
+            assert.ok(nock.isDone());
+            assert.deepStrictEqual(err.name, 'ConnectionTimeoutError');
+            done();
+          } else {
+            assert.fail();
+          }
+        });
+      });
+      it('data', (done) => {
+        nock('http://localhost')
+          .post('/api')
+          .times(3)
+          .delayBody(200)
+          .reply(204);
+
+        retryrequest(http, {
+          hostname: 'localhost',
+          method: 'POST',
+          path: '/api'
+        }, Buffer.alloc(10), {maxAttempts: 3}, {dataTimeoutInMilliseconds: 100}, (err) => {
+          if (err) {
+            assert.ok(nock.isDone());
+            assert.deepStrictEqual(err.name, 'DataTimeoutError');
+            done();
+          } else {
+            assert.fail();
+          }
+        });
+      });
+    });
+  });
   describe('imds', () => {
     before(() => {
       nock.disableNetConnect();
@@ -1144,7 +1355,7 @@ describe('index', () => {
                 (err) => {
                   if (err) {
                     assert.ok(nock.isDone());
-                    assert.deepStrictEqual(err.code, 'ECONNRESET');
+                    assert.deepStrictEqual(err.name, 'ConnectionTimeoutError');
                     done();
                   } else {
                     assert.fail();
