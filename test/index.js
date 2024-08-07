@@ -331,6 +331,49 @@ describe('index', () => {
         }
       });
     });
+    it('retry recover', (done) => {
+      nock('http://localhost')
+        .post('/api')
+        .times(2)
+        .reply(429)
+        .post('/api')
+        .reply(204);
+
+      retryrequest(http, {
+        hostname: 'localhost',
+        method: 'POST',
+        path: '/api'
+      }, Buffer.alloc(10), {maxAttempts: 3}, {}, (err, res, body) => {
+        if (err) {
+          done(err);
+        } else {
+          assert.ok(nock.isDone());
+          assert.deepStrictEqual(res.statusCode, 204);
+          assert.deepStrictEqual(body.length, 0);
+          done();
+        }
+      });
+    });
+    it('retry fail', (done) => {
+      nock('http://localhost')
+        .post('/api')
+        .times(3)
+        .reply(429);
+
+      retryrequest(http, {
+        hostname: 'localhost',
+        method: 'POST',
+        path: '/api'
+      }, Buffer.alloc(10), {maxAttempts: 3}, {}, (err) => {
+        if (err) {
+          assert.ok(nock.isDone());
+          assert.deepStrictEqual(err.message, 'status code: 429');
+          done();
+        } else {
+          assert.fail();
+        }
+      });
+    });
     describe('timeout', () => {
       it('connection', (done) => {
         nock('http://localhost')
@@ -1520,7 +1563,7 @@ describe('index', () => {
                   if (err) {
                     assert.ok(nock.isDone());
                     assert.deepStrictEqual(err.statusCode, 500);
-                    assert.deepStrictEqual(err.message, 'status code: 500, content-type: undefined');
+                    assert.deepStrictEqual(err.message, 'status code: 500');
                     done();
                   } else {
                     assert.fail();

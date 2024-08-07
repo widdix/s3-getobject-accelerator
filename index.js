@@ -226,7 +226,11 @@ function retryrequest(nodemodule, requestOptions, body, retryOptions, timeoutOpt
             err.body = body;
             retry(err);
           } else {
-            const err = new Error(`status code: ${res.statusCode}, content-type: ${res.headers['content-type']}`);
+            let message = `status code: ${res.statusCode}`;
+            if (res.headers['content-type']) {
+              message += `, content-type: ${res.headers['content-type']}`;
+            }
+            const err = new Error(message);
             err.statusCode = res.statusCode;
             err.body = body;
             retry(err);
