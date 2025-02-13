@@ -63,7 +63,7 @@ class WriteTimeoutError extends Error {
 exports.WriteTimeoutError = WriteTimeoutError;
 
 const RETRIABLE_NETWORK_ERROR_CODES = ['ECONNRESET', 'ENOTFOUND', 'ESOCKETTIMEDOUT', 'ETIMEDOUT', 'ECONNREFUSED', 'EHOSTUNREACH', 'EPIPE', 'EAI_AGAIN', 'EBUSY'];
-const RETRIABLE_ERROR_NAMES = ['ConnectionTimeoutError', 'ReadTimeoutError', 'DataTimeoutError', 'WriteTimeoutError'];
+const RETRIABLE_ERROR_NAMES = ['RequestTimeoutError', 'ConnectionTimeoutError', 'ReadTimeoutError', 'DataTimeoutError', 'WriteTimeoutError'];
 
 const AWS_CREDENTIALS_MAX_AGE_IN_MILLISECONDS = 4*60*1000; // From AWS docs: We make new credentials available at least five minutes before the expiration of the old credentials.
 const DNS_RECORD_MAX_AGE_IN_MILLISECONDS = 10*1000;
