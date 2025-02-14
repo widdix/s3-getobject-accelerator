@@ -377,6 +377,7 @@ exports.imds = imds;
 
 const DEFAULT_IMDS_TIMEOUT_OPTIONS = {
   requestTimeoutInMilliseconds: 3000,
+  resolveTimeoutInMilliseconds: 1000,
   connectionTimeoutInMilliseconds: 1000,
   readTimeoutInMilliseconds: 1000,
   dataTimeoutInMilliseconds: 1000,
