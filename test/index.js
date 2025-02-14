@@ -120,9 +120,9 @@ describe('index', () => {
         hostname: 's3.eu-west-x.amazonaws.com',
         method: 'GET',
         path: '/'
-      }, null, {}, (err1, res1) => {
-        if (err1) {
-          assert.deepStrictEqual(err1.code, 'ENOTFOUND');
+      }, null, {}, (err) => {
+        if (err) {
+          assert.deepStrictEqual(err.code, 'ENOTFOUND');
           done();
         } else {
           done(new Error('fail'));
