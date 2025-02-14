@@ -17,15 +17,15 @@
   },
   "homepage": "https://github.com/widdix/s3-getobject-accelerator#readme",
   "devDependencies": {
-    "aws-sdk": "2.1563.0",
+    "aws-sdk": "2.1692.0",
     "c8": "9.1.0",
-    "eslint": "8.56.0",
-    "mocha": "10.2.0",
-    "mock-fs": "5.2.0",
-    "nock": "13.5.1"
+    "eslint": "8.57.1",
+    "mocha": "10.8.2",
+    "mock-fs": "5.5.0",
+    "nock": "13.5.6"
   },
   "dependencies": {
-    "aws4": "1.12.0",
+    "aws4": "1.13.2",
     "xml2js": "0.6.2"
   },
   "c8": {
