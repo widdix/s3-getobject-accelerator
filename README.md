@@ -86,6 +86,7 @@ d.meta((err, metadata) => {
   * `partSizeInMegabytes` `<number>` (optional, defaults to uploaded part size)
   * `concurrency` `<number>`
   * `requestTimeoutInMilliseconds` `<number>` Maxium time for a request to complete from start to finish (optional, defaults to 300,000, 0 := no timeout)
+  * `resolveTimeoutInMilliseconds` `<number>` Maximum time for a DNS query to resolve (optional, defaults to 3,000, 0 := no timeout)
   * `connectionTimeoutInMilliseconds` `<number>` Maximum time for a socket to connect (optional, defaults to 3,000, 0 := no timeout)
   * `readTimeoutInMilliseconds` `<number>` Maxium time to read the response body (optional, defaults to 300,000, 0 := no timeout)
   * `dataTimeoutInMilliseconds` `<number>` Maxium time between two data events while reading the response body (optional, defaults to 3,000, 0 := no timeout)

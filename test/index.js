@@ -89,18 +89,45 @@ function nockImds() {
 }
 
 describe('index', () => {
-  it('real', (done) => {
-    request(http, {
-      hostname: 'google.com',
-      method: 'GET',
-      path: '/'
-    }, null, {}, (err, res) => {
-      if (err) {
-        done(err);
-      } else {
-        assert.deepStrictEqual(res.statusCode, 301);
-        done();
-      }
+  describe('real ', () => {
+    it('dns cache', (done) => {
+      request(http, {
+        hostname: 's3.eu-west-1.amazonaws.com',
+        method: 'GET',
+        path: '/'
+      }, null, {}, (err1, res1) => {
+        if (err1) {
+          done(err1);
+        } else {
+          assert.deepStrictEqual(res1.statusCode, 307);
+          request(http, {
+            hostname: 's3.eu-west-1.amazonaws.com',
+            method: 'GET',
+            path: '/'
+          }, null, {}, (err2, res2) => {
+            if (err2) {
+              done(err2);
+            } else {
+              assert.deepStrictEqual(res2.statusCode, 307);
+              done();
+            }
+          });
+        }
+      });
+    });
+    it('dns miss', (done) => {
+      request(http, {
+        hostname: 's3.eu-west-x.amazonaws.com',
+        method: 'GET',
+        path: '/'
+      }, null, {}, (err1, res1) => {
+        if (err1) {
+          assert.deepStrictEqual(err1.code, 'ENOTFOUND');
+          done();
+        } else {
+          done(new Error('fail'));
+        }
+      });
     });
   });
   describe('request', () => {

@@ -2,11 +2,12 @@ const {PassThrough} = require('node:stream');
 const {EventEmitter} = require('node:events');
 const {createWriteStream} = require('node:fs');
 const querystring = require('node:querystring');
-const dns = require('node:dns');
+const {Resolver} = require('node:dns');
 const https = require('node:https');
 const http = require('node:http');
 const aws4 = require('aws4');
 const {parseString} = require('xml2js');
+const {LRUCache} = require('lru-cache');
 
 const EVENT_NAME_OBJECT_DOWNLOADING  = 'object:downloading';
 const EVENT_NAME_PART_DOWNLOADING = 'part:downloading';
@@ -66,7 +67,8 @@ const RETRIABLE_NETWORK_ERROR_CODES = ['ECONNRESET', 'ENOTFOUND', 'ESOCKETTIMEDO
 const RETRIABLE_ERROR_NAMES = ['RequestTimeoutError', 'ConnectionTimeoutError', 'ReadTimeoutError', 'DataTimeoutError', 'WriteTimeoutError'];
 
 const AWS_CREDENTIALS_MAX_AGE_IN_MILLISECONDS = 4*60*1000; // From AWS docs: We make new credentials available at least five minutes before the expiration of the old credentials.
-const DNS_RECORD_MAX_AGE_IN_MILLISECONDS = 10*1000;
+const DNS_RECORD_MIN_TTL_IN_SECONDS = 5;
+const DNS_RECORD_MAX_TTL_IN_SECONDS = 30;
 const IMDS_TOKEN_TTL_IN_SECONDS = 60*10;
 const IMDS_TOKEN_MAX_AGE_IN_MILLISECONDS = (IMDS_TOKEN_TTL_IN_SECONDS-60)*1000;
 const MAX_RETRY_DELAY_IN_SECONDS = 20;
@@ -74,13 +76,13 @@ const MAX_RETRY_DELAY_IN_SECONDS = 20;
 let imdsTokenCache = undefined;
 let imdsRegionCache = undefined;
 let imdsCredentialsCache = undefined;
-let dnsCache = {};
+const dnsCache = new LRUCache({max: 1000, ttl: DNS_RECORD_MAX_TTL_IN_SECONDS*1000});
 
 exports.clearCache = () => {
   imdsTokenCache = undefined;
   imdsRegionCache = undefined;
   imdsCredentialsCache = undefined;
-  dnsCache = {};
+  dnsCache.clear();
 };
 
 function parseContentRange(contentRange) {
@@ -99,7 +101,70 @@ function parseContentRange(contentRange) {
 }
 
 function request(nodemodule, requestOptions, body, timeoutOptions, cb) {
-  requestOptions.lookup = getDnsCache;
+  const resolver = new Resolver({timeout: timeoutOptions.resolveTimeoutInMilliseconds, tries: 1});
+  requestOptions.lookup = (hostname, options, cb) => {
+    if (typeof options === 'function') {
+      cb = options;
+    }
+    if (typeof options === 'number') {
+      options = {family: options};
+    }
+
+    let family, fn;
+    if (options.family === undefined || options.family === 4 || options.family === 'IPv4') {
+      fn = 'resolve4';
+      family = 4;
+    } else if (options.family === 6 || options.family === 'IPv6') {
+      fn = 'resolve6';
+      family = 6;
+    } else {
+      return cb(new Error(`unsupported family: ${options.family}`));
+    }
+
+    const now = Date.now();
+    const dnsCacheKey = `${family}:${hostname}`;
+    const cache = dnsCache.get(dnsCacheKey);
+    if (cache !== undefined) {
+      let record;
+      while ((record = cache.shift()) !== undefined) {
+        if (record.expiredAt > now) {
+          if (options.all === true) {
+            return cb(null, [{address: record.address, family}]);
+          } else {
+            return cb(null, record.address, family);
+          }
+        }
+      }
+      dnsCache.delete(dnsCacheKey);
+    }
+
+    resolver[fn](hostname, {ttl: true}, (err, records) => {
+      if (err) {
+        cb(err);
+      } else {
+        if (records.length === 0) {
+          const enotfound = new Error('no records found');
+          enotfound.code = 'ENOTFOUND';
+          cb(enotfound);
+        } else {
+          const record = {address: records[0].address, expiredAt: now+(Math.min(Math.max(records[0].ttl, DNS_RECORD_MAX_TTL_IN_SECONDS), DNS_RECORD_MIN_TTL_IN_SECONDS)*1000)};
+          if (records.length > 1) {
+            dnsCache.set(dnsCacheKey, records.slice(1).map(record => ({address: record.address, expiredAt: now+(Math.min(Math.max(record.ttl, DNS_RECORD_MAX_TTL_IN_SECONDS), DNS_RECORD_MIN_TTL_IN_SECONDS)*1000)})));
+          }
+          if (options.all === true) {
+            cb(null, [{address: record.address, family}]);
+          } else {
+            cb(null, record.address, family);
+          }
+        }
+      }
+    });
+  };
+  if (requestOptions.signal !== undefined) {
+    requestOptions.signal.addEventListener('abort', () => {
+      resolver.cancel();
+    }, { once: true });
+  }
   if (timeoutOptions.connectionTimeoutInMilliseconds > 0) {
     requestOptions.timeout = timeoutOptions.connectionTimeoutInMilliseconds;
   }
@@ -411,59 +476,6 @@ function getAwsCredentials(v2AwsSdkCredentials, cb) {
   }
 }
 
-function getRecord() {
-  const record = this.records[this.ringIndex++];
-  if (this.ringIndex >= this.records.length) {
-    this.ringIndex = 0;
-  }
-  if (process.versions.node.startsWith('2')) {
-    return [{address: record, family: 4}];
-  } else {
-    return record;
-  }
-}
-
-function refreshDnsCache(hostname, options) { // eslint-disable-line no-unused-vars
-  // A = IPv4
-  dnsCache[hostname] = new Promise((resolve, reject) => {
-    dns.resolve(hostname, 'A', (err, records) => {
-      if (err) {
-        reject(err);
-      } else {
-        if (records.length === 0) {
-          reject(new Error('no DNS records returned'));
-        } else {
-          resolve({
-            ringIndex: 0,
-            records,
-            cachedAt: Date.now(),
-            getRecord
-          });
-        }
-      }
-    });
-  });
-  return dnsCache[hostname];
-}
-
-// signature is defined by Node.js (https://nodejs.org/api/dns.html#dnslookuphostname-options-callback)
-function getDnsCache(hostname, options, cb) {
-  // 4 = IPv4
-  const cache = dnsCache[hostname];
-  if (cache === undefined) {
-    refreshDnsCache(hostname, options).then(dns => cb(null, dns.getRecord(), 4)).catch(cb);
-  } else {
-    cache.then(dns => {
-      if ((Date.now()-dns.cachedAt) > DNS_RECORD_MAX_AGE_IN_MILLISECONDS) {
-        delete dnsCache[hostname];
-        getDnsCache(hostname, options, cb);
-      } else {
-        cb(null, dns.getRecord(), 4);
-      }
-    }).catch(cb);
-  }
-}
-
 function getHostname(endpointHostname, cb) {
   if (endpointHostname === undefined || endpointHostname === null) {
     // TODO Switch to virtual-hosted–style requests as soon as bucket names with a dot are supported (https://docs.aws.amazon.com/AmazonS3/latest/userguide/VirtualHosting.html)
@@ -497,7 +509,7 @@ function escapeKey(string) { // source https://github.com/aws/aws-sdk-js/blob/64
     });
 }
 
-function getObject({Bucket, Key, VersionId, PartNumber, Range}, {requestTimeoutInMilliseconds, connectionTimeoutInMilliseconds, readTimeoutInMilliseconds, dataTimeoutInMilliseconds, writeTimeoutInMilliseconds, v2AwsSdkCredentials, endpointHostname, agent}, cb) {
+function getObject({Bucket, Key, VersionId, PartNumber, Range}, {requestTimeoutInMilliseconds, resolveTimeoutInMilliseconds, connectionTimeoutInMilliseconds, readTimeoutInMilliseconds, dataTimeoutInMilliseconds, writeTimeoutInMilliseconds, v2AwsSdkCredentials, endpointHostname, agent}, cb) {
   const ac = new AbortController();
   const qs = {};
   const headers = {};
@@ -527,7 +539,7 @@ function getObject({Bucket, Key, VersionId, PartNumber, Range}, {requestTimeoutI
             signal: ac.signal,
             agent
           }, credentials);
-          retryrequest(https, options, undefined, {maxAttempts: 5}, {requestTimeoutInMilliseconds, connectionTimeoutInMilliseconds, readTimeoutInMilliseconds, dataTimeoutInMilliseconds, writeTimeoutInMilliseconds}, (err, res, body) => {
+          retryrequest(https, options, undefined, {maxAttempts: 5}, {requestTimeoutInMilliseconds, resolveTimeoutInMilliseconds, connectionTimeoutInMilliseconds, readTimeoutInMilliseconds, dataTimeoutInMilliseconds, writeTimeoutInMilliseconds}, (err, res, body) => {
             if (err) {
               cb(err);
             } else {
@@ -585,7 +597,7 @@ function getObject({Bucket, Key, VersionId, PartNumber, Range}, {requestTimeoutI
   return ac;
 }
 
-exports.download = ({bucket, key, version}, {partSizeInMegabytes, concurrency, requestTimeoutInMilliseconds, connectionTimeoutInMilliseconds, readTimeoutInMilliseconds, dataTimeoutInMilliseconds, writeTimeoutInMilliseconds, v2AwsSdkCredentials, endpointHostname, agent}) => {
+exports.download = ({bucket, key, version}, {partSizeInMegabytes, concurrency, requestTimeoutInMilliseconds, resolveTimeoutInMilliseconds, connectionTimeoutInMilliseconds, readTimeoutInMilliseconds, dataTimeoutInMilliseconds, writeTimeoutInMilliseconds, v2AwsSdkCredentials, endpointHostname, agent}) => {
   if (concurrency < 1) {
     throw new Error('concurrency > 0');
   }
@@ -594,6 +606,12 @@ exports.download = ({bucket, key, version}, {partSizeInMegabytes, concurrency, r
     requestTimeoutInMilliseconds = 300000;
   } else if (requestTimeoutInMilliseconds < 0) {
     throw new Error('requestTimeoutInMilliseconds >= 0');
+  }
+
+  if (resolveTimeoutInMilliseconds === undefined || resolveTimeoutInMilliseconds === null) {
+    resolveTimeoutInMilliseconds = 3000;
+  } else if (resolveTimeoutInMilliseconds < 0) {
+    throw new Error('resolveTimeoutInMilliseconds >= 0');
   }
 
   if (connectionTimeoutInMilliseconds === undefined || connectionTimeoutInMilliseconds === null) {
@@ -694,7 +712,7 @@ exports.download = ({bucket, key, version}, {partSizeInMegabytes, concurrency, r
       const endByte = Math.min(startByte+partSizeInBytes-1, bytesToDownload-1); // inclusive
       params.Range = `bytes=${startByte}-${endByte}`;
     }
-    const req = getObject(params, {requestTimeoutInMilliseconds, connectionTimeoutInMilliseconds, readTimeoutInMilliseconds, dataTimeoutInMilliseconds, writeTimeoutInMilliseconds, v2AwsSdkCredentials, endpointHostname, agent}, (err, data) => {
+    const req = getObject(params, {requestTimeoutInMilliseconds, resolveTimeoutInMilliseconds, connectionTimeoutInMilliseconds, readTimeoutInMilliseconds, dataTimeoutInMilliseconds, writeTimeoutInMilliseconds, v2AwsSdkCredentials, endpointHostname, agent}, (err, data) => {
       delete partsDownloading[partNo];
       if (err) {
         cb(err);
@@ -745,7 +763,7 @@ exports.download = ({bucket, key, version}, {partSizeInMegabytes, concurrency, r
           const endByte = partSizeInBytes-1; // inclusive
           params.Range = `bytes=0-${endByte}`;
         }
-        partsDownloading[1] = getObject(params, {requestTimeoutInMilliseconds, connectionTimeoutInMilliseconds, readTimeoutInMilliseconds, dataTimeoutInMilliseconds, writeTimeoutInMilliseconds, v2AwsSdkCredentials, endpointHostname, agent}, (err, data) => {
+        partsDownloading[1] = getObject(params, {requestTimeoutInMilliseconds, resolveTimeoutInMilliseconds, connectionTimeoutInMilliseconds, readTimeoutInMilliseconds, dataTimeoutInMilliseconds, writeTimeoutInMilliseconds, v2AwsSdkCredentials, endpointHostname, agent}, (err, data) => {
           delete partsDownloading[1];
           if (err) {
             if (err.code === 'InvalidRange') {
