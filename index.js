@@ -77,12 +77,14 @@ let imdsTokenCache = undefined;
 let imdsRegionCache = undefined;
 let imdsCredentialsCache = undefined;
 const dnsCache = new LRUCache({max: 1000, ttl: DNS_RECORD_MAX_TTL_IN_SECONDS*1000});
+const resolverCache = new LRUCache({max: 100});
 
 exports.clearCache = () => {
   imdsTokenCache = undefined;
   imdsRegionCache = undefined;
   imdsCredentialsCache = undefined;
   dnsCache.clear();
+  resolverCache.clear();
 };
 
 function parseContentRange(contentRange) {
@@ -100,8 +102,22 @@ function parseContentRange(contentRange) {
   }
 }
 
+function fetchResolver(timeoutInMilliseconds) {
+  let resolver = resolverCache.get(timeoutInMilliseconds);
+  if (resolver !== undefined) {
+    return resolver;
+  }
+  const resolverOptions = {tries: 1};
+  if (timeoutInMilliseconds > 0) {
+    resolverOptions.timeout = timeoutInMilliseconds;
+  }
+  resolver = new Resolver(resolverOptions);
+  resolverCache.set(timeoutInMilliseconds, resolver);
+  return resolver;
+}
+
 function request(nodemodule, requestOptions, body, timeoutOptions, cb) {
-  const resolver = new Resolver({timeout: timeoutOptions.resolveTimeoutInMilliseconds, tries: 1});
+  const resolver = fetchResolver(timeoutOptions.resolveTimeoutInMilliseconds);
   requestOptions.lookup = (hostname, options, cb) => {
     if (typeof options === 'function') {
       cb = options;
@@ -377,11 +393,11 @@ exports.imds = imds;
 
 const DEFAULT_IMDS_TIMEOUT_OPTIONS = {
   requestTimeoutInMilliseconds: 3000,
-  resolveTimeoutInMilliseconds: 1000,
-  connectionTimeoutInMilliseconds: 1000,
-  readTimeoutInMilliseconds: 1000,
-  dataTimeoutInMilliseconds: 1000,
-  writeTimeoutInMilliseconds: 1000
+  resolveTimeoutInMilliseconds: 0,
+  connectionTimeoutInMilliseconds: 3000,
+  readTimeoutInMilliseconds: 0,
+  dataTimeoutInMilliseconds: 0,
+  writeTimeoutInMilliseconds: 0
 };
 
 function refreshAwsRegion() {
