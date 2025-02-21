@@ -9,6 +9,9 @@ const aws4 = require('aws4');
 const {parseString} = require('xml2js');
 const {LRUCache} = require('lru-cache');
 
+const EVENT_NAME_REQUEST_NAME_RESOLVING = 'request:name-resolving';
+const EVENT_NAME_REQUEST_NAME_RESOLVED = 'request:name-resolved';
+const EVENT_NAME_REQUEST_RETRYING = 'request:retrying';
 const EVENT_NAME_OBJECT_DOWNLOADING  = 'object:downloading';
 const EVENT_NAME_PART_DOWNLOADING = 'part:downloading';
 const EVENT_NAME_PART_DOWNLOADED = 'part:downloaded';
@@ -16,6 +19,9 @@ const EVENT_NAME_PART_WRITING = 'part:writing';
 const EVENT_NAME_PART_DONE = 'part:done';
 
 const EVENT_NAMES = [
+  EVENT_NAME_REQUEST_NAME_RESOLVING,
+  EVENT_NAME_REQUEST_NAME_RESOLVED,
+  EVENT_NAME_REQUEST_RETRYING,
   EVENT_NAME_OBJECT_DOWNLOADING,
   EVENT_NAME_PART_DOWNLOADING,
   EVENT_NAME_PART_DOWNLOADED,
@@ -117,7 +123,7 @@ function fetchResolver(timeoutInMilliseconds) {
   return resolver;
 }
 
-function request(nodemodule, requestOptions, body, timeoutOptions, cb) {
+function request(nodemodule, requestOptions, body, timeoutOptions, contextOptions, cb) {
   const resolver = fetchResolver(timeoutOptions.resolveTimeoutInMilliseconds);
   requestOptions.lookup = (hostname, options, cb) => {
     if (typeof options === 'function') {
@@ -145,6 +151,7 @@ function request(nodemodule, requestOptions, body, timeoutOptions, cb) {
       let record;
       while ((record = cache.shift()) !== undefined) {
         if (record.expiredAt > now) {
+          contextOptions.emitter?.emit(EVENT_NAME_REQUEST_NAME_RESOLVED, {cached: true});
           if (options.all === true) {
             return cb(null, [{address: record.address, family}]);
           } else {
@@ -155,6 +162,7 @@ function request(nodemodule, requestOptions, body, timeoutOptions, cb) {
       dnsCache.delete(dnsCacheKey);
     }
 
+    contextOptions.emitter?.emit(EVENT_NAME_REQUEST_NAME_RESOLVING);
     resolver[fn](hostname, {ttl: true}, (err, records) => {
       if (err) {
         cb(err);
@@ -168,6 +176,7 @@ function request(nodemodule, requestOptions, body, timeoutOptions, cb) {
           if (records.length > 1) {
             dnsCache.set(dnsCacheKey, records.slice(1).map(record => ({address: record.address, expiredAt: now+(Math.min(Math.max(record.ttl, DNS_RECORD_MAX_TTL_IN_SECONDS), DNS_RECORD_MIN_TTL_IN_SECONDS)*1000)})));
           }
+          contextOptions.emitter?.emit(EVENT_NAME_REQUEST_NAME_RESOLVED, {cached: false});
           if (options.all === true) {
             cb(null, [{address: record.address, family}]);
           } else {
@@ -270,13 +279,14 @@ function request(nodemodule, requestOptions, body, timeoutOptions, cb) {
 }
 exports.request = request;
 
-function retryrequest(nodemodule, requestOptions, body, retryOptions, timeoutOptions, cb) {
+function retryrequest(nodemodule, requestOptions, body, retryOptions, timeoutOptions, contextOptions, cb) {
   let attempt = 1;
   const retry = (err) => {
     attempt++;
     if (attempt <= retryOptions.maxAttempts) {
       const maxRetryDelayInSeconds = ('maxRetryDelayInSeconds' in retryOptions) ? retryOptions.maxRetryDelayInSeconds : MAX_RETRY_DELAY_IN_SECONDS;
       const delayInMilliseconds = Math.min(Math.random() * Math.pow(2, attempt-1), maxRetryDelayInSeconds) * 1000;
+      contextOptions.emitter?.emit(EVENT_NAME_REQUEST_RETRYING, {attempt, delayInMilliseconds, err});
       setTimeout(() => {
         if (requestOptions.signal) {
           if (requestOptions.signal.aborted === true) {
@@ -293,7 +303,7 @@ function retryrequest(nodemodule, requestOptions, body, retryOptions, timeoutOpt
     }
   };
   const req = () => {
-    request(nodemodule, requestOptions, body, timeoutOptions, (err, res, body) => {
+    request(nodemodule, requestOptions, body, timeoutOptions, contextOptions, (err, res, body) => {
       if (err) {
         if (RETRIABLE_NETWORK_ERROR_CODES.includes(err.code) || RETRIABLE_ERROR_NAMES.includes(err.name)) {
           retry(err);
@@ -334,7 +344,7 @@ function imdsRequest(method, path, headers, timeoutOptions, cb) {
     path,
     headers
   };
-  retryrequest(http, options, undefined, {maxAttempts: 3}, timeoutOptions, (err, res, body) => {
+  retryrequest(http, options, undefined, {maxAttempts: 3}, timeoutOptions, {}, (err, res, body) => {
     if (err) {
       cb(err);
     } else {
@@ -527,7 +537,7 @@ function escapeKey(string) { // source https://github.com/aws/aws-sdk-js/blob/64
     });
 }
 
-function getObject({Bucket, Key, VersionId, PartNumber, Range}, {requestTimeoutInMilliseconds, resolveTimeoutInMilliseconds, connectionTimeoutInMilliseconds, readTimeoutInMilliseconds, dataTimeoutInMilliseconds, writeTimeoutInMilliseconds, v2AwsSdkCredentials, endpointHostname, agent}, cb) {
+function getObject({Bucket, Key, VersionId, PartNumber, Range}, {requestTimeoutInMilliseconds, resolveTimeoutInMilliseconds, connectionTimeoutInMilliseconds, readTimeoutInMilliseconds, dataTimeoutInMilliseconds, writeTimeoutInMilliseconds, v2AwsSdkCredentials, endpointHostname, agent, emitter}, cb) {
   const ac = new AbortController();
   const qs = {};
   const headers = {};
@@ -557,7 +567,7 @@ function getObject({Bucket, Key, VersionId, PartNumber, Range}, {requestTimeoutI
             signal: ac.signal,
             agent
           }, credentials);
-          retryrequest(https, options, undefined, {maxAttempts: 5}, {requestTimeoutInMilliseconds, resolveTimeoutInMilliseconds, connectionTimeoutInMilliseconds, readTimeoutInMilliseconds, dataTimeoutInMilliseconds, writeTimeoutInMilliseconds}, (err, res, body) => {
+          retryrequest(https, options, undefined, {maxAttempts: 5}, {requestTimeoutInMilliseconds, resolveTimeoutInMilliseconds, connectionTimeoutInMilliseconds, readTimeoutInMilliseconds, dataTimeoutInMilliseconds, writeTimeoutInMilliseconds}, {emitter}, (err, res, body) => {
             if (err) {
               cb(err);
             } else {
@@ -730,7 +740,7 @@ exports.download = ({bucket, key, version}, {partSizeInMegabytes, concurrency, r
       const endByte = Math.min(startByte+partSizeInBytes-1, bytesToDownload-1); // inclusive
       params.Range = `bytes=${startByte}-${endByte}`;
     }
-    const req = getObject(params, {requestTimeoutInMilliseconds, resolveTimeoutInMilliseconds, connectionTimeoutInMilliseconds, readTimeoutInMilliseconds, dataTimeoutInMilliseconds, writeTimeoutInMilliseconds, v2AwsSdkCredentials, endpointHostname, agent}, (err, data) => {
+    const req = getObject(params, {requestTimeoutInMilliseconds, resolveTimeoutInMilliseconds, connectionTimeoutInMilliseconds, readTimeoutInMilliseconds, dataTimeoutInMilliseconds, writeTimeoutInMilliseconds, v2AwsSdkCredentials, endpointHostname, agent, emitter}, (err, data) => {
       delete partsDownloading[partNo];
       if (err) {
         cb(err);
@@ -781,7 +791,7 @@ exports.download = ({bucket, key, version}, {partSizeInMegabytes, concurrency, r
           const endByte = partSizeInBytes-1; // inclusive
           params.Range = `bytes=0-${endByte}`;
         }
-        partsDownloading[1] = getObject(params, {requestTimeoutInMilliseconds, resolveTimeoutInMilliseconds, connectionTimeoutInMilliseconds, readTimeoutInMilliseconds, dataTimeoutInMilliseconds, writeTimeoutInMilliseconds, v2AwsSdkCredentials, endpointHostname, agent}, (err, data) => {
+        partsDownloading[1] = getObject(params, {requestTimeoutInMilliseconds, resolveTimeoutInMilliseconds, connectionTimeoutInMilliseconds, readTimeoutInMilliseconds, dataTimeoutInMilliseconds, writeTimeoutInMilliseconds, v2AwsSdkCredentials, endpointHostname, agent, emitter}, (err, data) => {
           delete partsDownloading[1];
           if (err) {
             if (err.code === 'InvalidRange') {

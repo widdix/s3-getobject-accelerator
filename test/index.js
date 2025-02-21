@@ -95,7 +95,7 @@ describe('index', () => {
         hostname: 's3.eu-west-1.amazonaws.com',
         method: 'GET',
         path: '/'
-      }, null, {}, (err1, res1) => {
+      }, null, {}, {}, (err1, res1) => {
         if (err1) {
           done(err1);
         } else {
@@ -104,7 +104,7 @@ describe('index', () => {
             hostname: 's3.eu-west-1.amazonaws.com',
             method: 'GET',
             path: '/'
-          }, null, {}, (err2, res2) => {
+          }, null, {}, {}, (err2, res2) => {
             if (err2) {
               done(err2);
             } else {
@@ -120,7 +120,7 @@ describe('index', () => {
         hostname: 's3.eu-west-x.amazonaws.com',
         method: 'GET',
         path: '/'
-      }, null, {}, (err) => {
+      }, null, {}, {}, (err) => {
         if (err) {
           assert.deepStrictEqual(err.code, 'ENOTFOUND');
           done();
@@ -147,7 +147,7 @@ describe('index', () => {
         hostname: 'localhost',
         method: 'GET',
         path: '/test'
-      }, null, {}, (err, res, body) => {
+      }, null, {}, {}, (err, res, body) => {
         if (err) {
           done(err);
         } else {
@@ -164,7 +164,7 @@ describe('index', () => {
         hostname: 'localhost',
         method: 'GET',
         path: '/test'
-      }, null, {}, (err, res, body) => {
+      }, null, {}, {}, (err, res, body) => {
         if (err) {
           done(err);
         } else {
@@ -181,7 +181,7 @@ describe('index', () => {
         hostname: 'localhost',
         method: 'GET',
         path: '/test'
-      }, null, {}, (err, res, body) => {
+      }, null, {}, {}, (err, res, body) => {
         if (err) {
           done(err);
         } else {
@@ -198,7 +198,7 @@ describe('index', () => {
         hostname: 'localhost',
         method: 'GET',
         path: '/test'
-      }, null, {}, (err, res, body) => {
+      }, null, {}, {}, (err, res, body) => {
         if (err) {
           done(err);
         } else {
@@ -215,7 +215,7 @@ describe('index', () => {
         hostname: 'localhost',
         method: 'GET',
         path: '/test'
-      }, null, {}, (err, res, body) => {
+      }, null, {}, {}, (err, res, body) => {
         if (err) {
           done(err);
         } else {
@@ -235,7 +235,7 @@ describe('index', () => {
           hostname: 'localhost',
           method: 'POST',
           path: '/api'
-        }, Buffer.alloc(10), {requestTimeoutInMilliseconds: 100, connectionTimeoutInMilliseconds: 0, readTimeoutInMilliseconds: 0, dataTimeoutInMilliseconds: 0, writeTimeoutInMilliseconds: 0}, (err) => {
+        }, Buffer.alloc(10), {requestTimeoutInMilliseconds: 100, connectionTimeoutInMilliseconds: 0, readTimeoutInMilliseconds: 0, dataTimeoutInMilliseconds: 0, writeTimeoutInMilliseconds: 0}, {}, (err) => {
           if (err) {
             assert.ok(nock.isDone());
             assert.deepStrictEqual(err.name, 'RequestTimeoutError');
@@ -255,7 +255,7 @@ describe('index', () => {
           hostname: 'localhost',
           method: 'POST',
           path: '/api'
-        }, Buffer.alloc(10), {requestTimeoutInMilliseconds: 0, connectionTimeoutInMilliseconds: 100, readTimeoutInMilliseconds: 0, dataTimeoutInMilliseconds: 0, writeTimeoutInMilliseconds: 0}, (err) => {
+        }, Buffer.alloc(10), {requestTimeoutInMilliseconds: 0, connectionTimeoutInMilliseconds: 100, readTimeoutInMilliseconds: 0, dataTimeoutInMilliseconds: 0, writeTimeoutInMilliseconds: 0}, {}, (err) => {
           if (err) {
             assert.ok(nock.isDone());
             assert.deepStrictEqual(err.name, 'ConnectionTimeoutError');
@@ -274,7 +274,7 @@ describe('index', () => {
           hostname: 'localhost',
           method: 'GET',
           path: '/test'
-        }, null, {requestTimeoutInMilliseconds: 0, connectionTimeoutInMilliseconds: 0, readTimeoutInMilliseconds: 100, dataTimeoutInMilliseconds: 0, writeTimeoutInMilliseconds: 0}, (err) => {
+        }, null, {requestTimeoutInMilliseconds: 0, connectionTimeoutInMilliseconds: 0, readTimeoutInMilliseconds: 100, dataTimeoutInMilliseconds: 0, writeTimeoutInMilliseconds: 0}, {}, (err) => {
           if (err) {
             assert.ok(nock.isDone());
             assert.deepStrictEqual(err.name, 'ReadTimeoutError');
@@ -293,7 +293,7 @@ describe('index', () => {
           hostname: 'localhost',
           method: 'GET',
           path: '/test'
-        }, null, {requestTimeoutInMilliseconds: 0, connectionTimeoutInMilliseconds: 100, readTimeoutInMilliseconds: 0, dataTimeoutInMilliseconds: 100, writeTimeoutInMilliseconds: 0}, (err) => {
+        }, null, {requestTimeoutInMilliseconds: 0, connectionTimeoutInMilliseconds: 100, readTimeoutInMilliseconds: 0, dataTimeoutInMilliseconds: 100, writeTimeoutInMilliseconds: 0}, {}, (err) => {
           if (err) {
             assert.ok(nock.isDone());
             assert.deepStrictEqual(err.name, 'DataTimeoutError');
@@ -327,7 +327,7 @@ describe('index', () => {
         hostname: 'localhost',
         method: 'POST',
         path: '/api'
-      }, Buffer.alloc(10), {maxAttempts: 3}, {}, (err, res, body) => {
+      }, Buffer.alloc(10), {maxAttempts: 3}, {}, {}, (err, res, body) => {
         if (err) {
           done(err);
         } else {
@@ -347,7 +347,7 @@ describe('index', () => {
         hostname: 'localhost',
         method: 'POST',
         path: '/api'
-      }, Buffer.alloc(10), {maxAttempts: 3}, {}, (err, res, body) => {
+      }, Buffer.alloc(10), {maxAttempts: 3}, {}, {}, (err, res, body) => {
         if (err) {
           done(err);
         } else {
@@ -370,7 +370,7 @@ describe('index', () => {
         hostname: 'localhost',
         method: 'POST',
         path: '/api'
-      }, Buffer.alloc(10), {maxAttempts: 3}, {}, (err, res, body) => {
+      }, Buffer.alloc(10), {maxAttempts: 3}, {}, {}, (err, res, body) => {
         if (err) {
           done(err);
         } else {
@@ -391,7 +391,7 @@ describe('index', () => {
         hostname: 'localhost',
         method: 'POST',
         path: '/api'
-      }, Buffer.alloc(10), {maxAttempts: 3}, {}, (err) => {
+      }, Buffer.alloc(10), {maxAttempts: 3}, {}, {}, (err) => {
         if (err) {
           assert.ok(nock.isDone());
           assert.deepStrictEqual(err.message, 'status code: 429');
@@ -413,7 +413,7 @@ describe('index', () => {
           hostname: 'localhost',
           method: 'POST',
           path: '/api'
-        }, Buffer.alloc(10), {maxAttempts: 3}, {connectionTimeoutInMilliseconds: 100}, (err) => {
+        }, Buffer.alloc(10), {maxAttempts: 3}, {connectionTimeoutInMilliseconds: 100}, {}, (err) => {
           if (err) {
             assert.ok(nock.isDone());
             assert.deepStrictEqual(err.name, 'ConnectionTimeoutError');
@@ -434,7 +434,7 @@ describe('index', () => {
           hostname: 'localhost',
           method: 'POST',
           path: '/api'
-        }, Buffer.alloc(10), {maxAttempts: 3}, {dataTimeoutInMilliseconds: 100}, (err) => {
+        }, Buffer.alloc(10), {maxAttempts: 3}, {dataTimeoutInMilliseconds: 100}, {}, (err) => {
           if (err) {
             assert.ok(nock.isDone());
             assert.deepStrictEqual(err.name, 'DataTimeoutError');
