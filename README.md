@@ -37,7 +37,6 @@ pipeline(
 Get insights into the part downloads and write to file directly without stream if it is smaller than 1 TiB:
 
 ```js
-const {createWriteStream} = require('node:fs');
 const {download} = require('s3-getobject-accelerator');
 
 const d = download({bucket: 'bucket', key: 'key', version: 'optional version'}, {partSizeInMegabytes: 8, concurrency: 4});

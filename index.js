@@ -11,6 +11,12 @@ const {LRUCache} = require('lru-cache');
 
 const EVENT_NAME_REQUEST_NAME_RESOLVING = 'request:name-resolving';
 const EVENT_NAME_REQUEST_NAME_RESOLVED = 'request:name-resolved';
+const EVENT_NAME_REQUEST_CONNECTING = 'request:connecting';
+const EVENT_NAME_REQUEST_CONNECTED = 'request:connected';
+const EVENT_NAME_REQUEST_BODY_WRITING = 'request:body-writing';
+const EVENT_NAME_REQUEST_BODY_WRITTEN = 'request:body-written';
+const EVENT_NAME_REQUEST_BODY_READING = 'request:body-reading';
+const EVENT_NAME_REQUEST_BODY_READ = 'request:body-read';
 const EVENT_NAME_REQUEST_RETRYING = 'request:retrying';
 const EVENT_NAME_OBJECT_DOWNLOADING  = 'object:downloading';
 const EVENT_NAME_PART_DOWNLOADING = 'part:downloading';
@@ -21,6 +27,12 @@ const EVENT_NAME_PART_DONE = 'part:done';
 const EVENT_NAMES = [
   EVENT_NAME_REQUEST_NAME_RESOLVING,
   EVENT_NAME_REQUEST_NAME_RESOLVED,
+  EVENT_NAME_REQUEST_CONNECTING,
+  EVENT_NAME_REQUEST_CONNECTED,
+  EVENT_NAME_REQUEST_BODY_WRITING,
+  EVENT_NAME_REQUEST_BODY_WRITTEN,
+  EVENT_NAME_REQUEST_BODY_READING,
+  EVENT_NAME_REQUEST_BODY_READ,
   EVENT_NAME_REQUEST_RETRYING,
   EVENT_NAME_OBJECT_DOWNLOADING,
   EVENT_NAME_PART_DOWNLOADING,
@@ -83,6 +95,8 @@ const MAX_RETRY_DELAY_IN_SECONDS = 20;
 let imdsTokenCache = undefined;
 let imdsRegionCache = undefined;
 let imdsCredentialsCache = undefined;
+let lastRequestNo = 1;
+let lastDownloadNo = 1;
 const dnsCache = new LRUCache({max: 1000, ttl: DNS_RECORD_MAX_TTL_IN_SECONDS*1000});
 const resolverCache = new LRUCache({max: 100});
 
@@ -90,6 +104,8 @@ exports.clearCache = () => {
   imdsTokenCache = undefined;
   imdsRegionCache = undefined;
   imdsCredentialsCache = undefined;
+  lastRequestNo = 1;
+  lastDownloadNo = 1;
   dnsCache.clear();
   resolverCache.clear();
 };
@@ -125,6 +141,9 @@ function fetchResolver(timeoutInMilliseconds) {
 
 function request(nodemodule, requestOptions, body, timeoutOptions, contextOptions, cb) {
   const resolver = fetchResolver(timeoutOptions.resolveTimeoutInMilliseconds);
+  const requestNo = lastRequestNo++;
+  const traceId = (contextOptions.traceId) ? `${contextOptions.traceId}:request=${requestNo}` : `request=${requestNo}`;
+
   requestOptions.lookup = (hostname, options, cb) => {
     if (typeof options === 'function') {
       cb = options;
@@ -151,7 +170,7 @@ function request(nodemodule, requestOptions, body, timeoutOptions, contextOption
       let record;
       while ((record = cache.shift()) !== undefined) {
         if (record.expiredAt > now) {
-          contextOptions.emitter?.emit(EVENT_NAME_REQUEST_NAME_RESOLVED, {cached: true});
+          contextOptions.emitter?.emit(EVENT_NAME_REQUEST_NAME_RESOLVED, {traceId, hostname, family, address: record.address, cached: true});
           if (options.all === true) {
             return cb(null, [{address: record.address, family}]);
           } else {
@@ -162,7 +181,7 @@ function request(nodemodule, requestOptions, body, timeoutOptions, contextOption
       dnsCache.delete(dnsCacheKey);
     }
 
-    contextOptions.emitter?.emit(EVENT_NAME_REQUEST_NAME_RESOLVING);
+    contextOptions.emitter?.emit(EVENT_NAME_REQUEST_NAME_RESOLVING, {traceId, hostname, family});
     resolver[fn](hostname, {ttl: true}, (err, records) => {
       if (err) {
         cb(err);
@@ -176,7 +195,7 @@ function request(nodemodule, requestOptions, body, timeoutOptions, contextOption
           if (records.length > 1) {
             dnsCache.set(dnsCacheKey, records.slice(1).map(record => ({address: record.address, expiredAt: now+(Math.min(Math.max(record.ttl, DNS_RECORD_MAX_TTL_IN_SECONDS), DNS_RECORD_MIN_TTL_IN_SECONDS)*1000)})));
           }
-          contextOptions.emitter?.emit(EVENT_NAME_REQUEST_NAME_RESOLVED, {cached: false});
+          contextOptions.emitter?.emit(EVENT_NAME_REQUEST_NAME_RESOLVED, {traceId, hostname, family, address: record.address, cached: false});
           if (options.all === true) {
             cb(null, [{address: record.address, family}]);
           } else {
@@ -205,7 +224,9 @@ function request(nodemodule, requestOptions, body, timeoutOptions, contextOption
     clearTimeout(readTimeoutId);
     clearTimeout(writeTimeoutId);
   };
+  contextOptions.emitter?.emit(EVENT_NAME_REQUEST_CONNECTING, {traceId, hostname: requestOptions.hostname, method: requestOptions.method, path: requestOptions.path});
   const req = nodemodule.request(requestOptions, (res) => {
+    contextOptions.emitter?.emit(EVENT_NAME_REQUEST_CONNECTED, {traceId});
     if (timeoutOptions.readTimeoutInMilliseconds > 0) {
       readTimeoutId = setTimeout(() => {
         clearTimeouts();
@@ -225,6 +246,7 @@ function request(nodemodule, requestOptions, body, timeoutOptions, contextOption
         }, timeoutOptions.dataTimeoutInMilliseconds);
       }
     };
+    contextOptions.emitter?.emit(EVENT_NAME_REQUEST_BODY_READING, {traceId});
     resetDataTimeout();
     res.on('data', chunk => {
       resetDataTimeout();
@@ -237,6 +259,7 @@ function request(nodemodule, requestOptions, body, timeoutOptions, contextOption
       }
     });
     res.on('end', () => {
+      contextOptions.emitter?.emit(EVENT_NAME_REQUEST_BODY_READ, {traceId});
       clearTimeouts();
       if (cbcalled === false) {
         cbcalled = true;
@@ -271,7 +294,9 @@ function request(nodemodule, requestOptions, body, timeoutOptions, contextOption
         req.destroy(new WriteTimeoutError());
       }, timeoutOptions.writeTimeoutInMilliseconds);
     }
+    contextOptions.emitter?.emit(EVENT_NAME_REQUEST_BODY_WRITING, {traceId});
     req.write(body, () => {
+      contextOptions.emitter?.emit(EVENT_NAME_REQUEST_BODY_WRITTEN, {traceId});
       clearTimeout(writeTimeoutId);
     });
   }
@@ -280,33 +305,33 @@ function request(nodemodule, requestOptions, body, timeoutOptions, contextOption
 exports.request = request;
 
 function retryrequest(nodemodule, requestOptions, body, retryOptions, timeoutOptions, contextOptions, cb) {
-  let attempt = 1;
-  const retry = (err) => {
-    attempt++;
+  const getTraceId = (attempt) => (contextOptions.traceId) ? `${contextOptions.traceId}:attempt=${attempt}` : `attempt=${attempt}`;
+  const retry = (erredAttempt, err) => {
+    const attempt = erredAttempt+1;
     if (attempt <= retryOptions.maxAttempts) {
       const maxRetryDelayInSeconds = ('maxRetryDelayInSeconds' in retryOptions) ? retryOptions.maxRetryDelayInSeconds : MAX_RETRY_DELAY_IN_SECONDS;
       const delayInMilliseconds = Math.min(Math.random() * Math.pow(2, attempt-1), maxRetryDelayInSeconds) * 1000;
-      contextOptions.emitter?.emit(EVENT_NAME_REQUEST_RETRYING, {attempt, delayInMilliseconds, err});
+      contextOptions.emitter?.emit(EVENT_NAME_REQUEST_RETRYING, {traceId: getTraceId(attempt), attempt, delayInMilliseconds, err});
       setTimeout(() => {
         if (requestOptions.signal) {
           if (requestOptions.signal.aborted === true) {
             cb(requestOptions.signal.reason);
           } else {
-            req();
+            req(attempt);
           }
         } else {
-          req();
+          req(attempt);
         }
       }, delayInMilliseconds);
     } else {
       cb(err);
     }
   };
-  const req = () => {
-    request(nodemodule, requestOptions, body, timeoutOptions, contextOptions, (err, res, body) => {
+  const req = (attempt) => {
+    request(nodemodule, requestOptions, body, timeoutOptions, {...contextOptions, traceId: getTraceId(attempt)}, (err, res, body) => {
       if (err) {
         if (RETRIABLE_NETWORK_ERROR_CODES.includes(err.code) || RETRIABLE_ERROR_NAMES.includes(err.name)) {
-          retry(err);
+          retry(attempt, err);
         } else {
           cb(err);
         }
@@ -316,7 +341,7 @@ function retryrequest(nodemodule, requestOptions, body, retryOptions, timeoutOpt
             const err = new Error(`status code: ${res.statusCode}\n${body.toString('utf8')}`);
             err.statusCode = res.statusCode;
             err.body = body;
-            retry(err);
+            retry(attempt, err);
           } else {
             let message = `status code: ${res.statusCode}`;
             if (res.headers['content-type']) {
@@ -325,7 +350,7 @@ function retryrequest(nodemodule, requestOptions, body, retryOptions, timeoutOpt
             const err = new Error(message);
             err.statusCode = res.statusCode;
             err.body = body;
-            retry(err);
+            retry(attempt, err);
           }
         } else {
           cb(null, res, body);
@@ -333,7 +358,7 @@ function retryrequest(nodemodule, requestOptions, body, retryOptions, timeoutOpt
       }
     });
   };
-  req();
+  req(1);
 }
 exports.retryrequest = retryrequest;
 
@@ -537,7 +562,7 @@ function escapeKey(string) { // source https://github.com/aws/aws-sdk-js/blob/64
     });
 }
 
-function getObject({Bucket, Key, VersionId, PartNumber, Range}, {requestTimeoutInMilliseconds, resolveTimeoutInMilliseconds, connectionTimeoutInMilliseconds, readTimeoutInMilliseconds, dataTimeoutInMilliseconds, writeTimeoutInMilliseconds, v2AwsSdkCredentials, endpointHostname, agent, emitter}, cb) {
+function getObject({Bucket, Key, VersionId, PartNumber, Range}, {v2AwsSdkCredentials, endpointHostname, agent}, retryOptions, timeoutOptions, contextOptions, cb) {
   const ac = new AbortController();
   const qs = {};
   const headers = {};
@@ -567,7 +592,7 @@ function getObject({Bucket, Key, VersionId, PartNumber, Range}, {requestTimeoutI
             signal: ac.signal,
             agent
           }, credentials);
-          retryrequest(https, options, undefined, {maxAttempts: 5}, {requestTimeoutInMilliseconds, resolveTimeoutInMilliseconds, connectionTimeoutInMilliseconds, readTimeoutInMilliseconds, dataTimeoutInMilliseconds, writeTimeoutInMilliseconds}, {emitter}, (err, res, body) => {
+          retryrequest(https, options, undefined, retryOptions, timeoutOptions, contextOptions, (err, res, body) => {
             if (err) {
               cb(err);
             } else {
@@ -672,6 +697,10 @@ exports.download = ({bucket, key, version}, {partSizeInMegabytes, concurrency, r
     }
   }
 
+  const retryOptions = {maxAttempts: 5};
+  const timeoutOptions = {requestTimeoutInMilliseconds, resolveTimeoutInMilliseconds, connectionTimeoutInMilliseconds, readTimeoutInMilliseconds, dataTimeoutInMilliseconds, writeTimeoutInMilliseconds};
+  const downloadNo = lastDownloadNo++;
+
   const emitter = new EventEmitter();
   const partSizeInBytes = mapPartSizeInBytes(partSizeInMegabytes);
   let stream = null;
@@ -710,9 +739,17 @@ exports.download = ({bucket, key, version}, {partSizeInMegabytes, concurrency, r
     }
   }
 
+  function getTraceId(partNo) {
+    if (partNo !== undefined) {
+      return `download=${downloadNo}:part=${partNo}`;
+    } else {
+      return `download=${downloadNo}`;
+    }
+  }
+
   function writePart(partNo, chunk, cb) {
     if (lastWrittenPartNo === (partNo-1)) {
-      emitter.emit(EVENT_NAME_PART_WRITING, {partNo});
+      emitter.emit(EVENT_NAME_PART_WRITING, {traceId: getTraceId(partNo), partNo});
       write(chunk, () => {
         lastWrittenPartNo = partNo;
         if (lastWrittenPartNo === partsToDownload) {
@@ -740,7 +777,7 @@ exports.download = ({bucket, key, version}, {partSizeInMegabytes, concurrency, r
       const endByte = Math.min(startByte+partSizeInBytes-1, bytesToDownload-1); // inclusive
       params.Range = `bytes=${startByte}-${endByte}`;
     }
-    const req = getObject(params, {requestTimeoutInMilliseconds, resolveTimeoutInMilliseconds, connectionTimeoutInMilliseconds, readTimeoutInMilliseconds, dataTimeoutInMilliseconds, writeTimeoutInMilliseconds, v2AwsSdkCredentials, endpointHostname, agent, emitter}, (err, data) => {
+    const req = getObject(params, {v2AwsSdkCredentials, endpointHostname, agent}, retryOptions, timeoutOptions, {emitter, traceId: getTraceId(partNo)}, (err, data) => {
       delete partsDownloading[partNo];
       if (err) {
         cb(err);
@@ -754,14 +791,14 @@ exports.download = ({bucket, key, version}, {partSizeInMegabytes, concurrency, r
   function downloadNextPart() {
     if (nextPartNo <= partsToDownload) {
       const partNo = nextPartNo++;
-      emitter.emit(EVENT_NAME_PART_DOWNLOADING, {partNo});
+      emitter.emit(EVENT_NAME_PART_DOWNLOADING, {traceId: getTraceId(partNo), partNo});
       downloadPart(partNo, (err, data) => {
         if (err) {
           abortDownloads(err);
         } else {
-          emitter.emit(EVENT_NAME_PART_DOWNLOADED, {partNo});
+          emitter.emit(EVENT_NAME_PART_DOWNLOADED, {traceId: getTraceId(partNo), partNo});
           writePart(partNo, data.Body, () => {
-            emitter.emit(EVENT_NAME_PART_DONE, {partNo});
+            emitter.emit(EVENT_NAME_PART_DONE, {traceId: getTraceId(partNo), partNo});
             process.nextTick(downloadNextPart);
           });
         }
@@ -791,7 +828,7 @@ exports.download = ({bucket, key, version}, {partSizeInMegabytes, concurrency, r
           const endByte = partSizeInBytes-1; // inclusive
           params.Range = `bytes=0-${endByte}`;
         }
-        partsDownloading[1] = getObject(params, {requestTimeoutInMilliseconds, resolveTimeoutInMilliseconds, connectionTimeoutInMilliseconds, readTimeoutInMilliseconds, dataTimeoutInMilliseconds, writeTimeoutInMilliseconds, v2AwsSdkCredentials, endpointHostname, agent, emitter}, (err, data) => {
+        partsDownloading[1] = getObject(params, {v2AwsSdkCredentials, endpointHostname, agent}, retryOptions, timeoutOptions,  {emitter, traceId: `download=${downloadNo}:part=1`}, (err, data) => {
           delete partsDownloading[1];
           if (err) {
             if (err.code === 'InvalidRange') {
@@ -826,41 +863,41 @@ exports.download = ({bucket, key, version}, {partSizeInMegabytes, concurrency, r
   }
 
   function start() {
-    emitter.emit(EVENT_NAME_PART_DOWNLOADING, {partNo: 1});
+    emitter.emit(EVENT_NAME_PART_DOWNLOADING, {traceId: getTraceId(1), partNo: 1});
     meta((err, metadata, body) => {
       if (err) {
         stream.destroy(err);
       } else {
-        emitter.emit(EVENT_NAME_OBJECT_DOWNLOADING, metadata);
+        emitter.emit(EVENT_NAME_OBJECT_DOWNLOADING, {traceId: getTraceId(), ...metadata});
         if (partSizeInBytes === null) {
-          emitter.emit(EVENT_NAME_PART_DOWNLOADED, {partNo: 1});
+          emitter.emit(EVENT_NAME_PART_DOWNLOADED, {traceId: getTraceId(1), partNo: 1});
           if ('parts' in metadata && metadata.parts > 1) {
-            emitter.emit(EVENT_NAME_PART_WRITING, {partNo: 1});
+            emitter.emit(EVENT_NAME_PART_WRITING, {traceId: getTraceId(1), partNo: 1});
             write(body, () => {
-              emitter.emit(EVENT_NAME_PART_DONE, {partNo: 1});
+              emitter.emit(EVENT_NAME_PART_DONE, {traceId: getTraceId(1), partNo: 1});
               lastWrittenPartNo = 1;
               nextPartNo = 2;
               partsToDownload = metadata.parts;
               startDownloadingParts();
             });
           } else {
-            emitter.emit(EVENT_NAME_PART_WRITING, {partNo: 1});
+            emitter.emit(EVENT_NAME_PART_WRITING, {traceId: getTraceId(1), partNo: 1});
             stream.end(body, () => {
-              emitter.emit(EVENT_NAME_PART_DONE, {partNo: 1});
+              emitter.emit(EVENT_NAME_PART_DONE, {traceId: getTraceId(1), partNo: 1});
             });
           }
         } else {
-          emitter.emit(EVENT_NAME_PART_DOWNLOADED, {partNo: 1});
+          emitter.emit(EVENT_NAME_PART_DOWNLOADED, {traceId: getTraceId(1), partNo: 1});
           bytesToDownload = metadata.lengthInBytes;
           if (bytesToDownload <= partSizeInBytes) {
-            emitter.emit(EVENT_NAME_PART_WRITING, {partNo: 1});
+            emitter.emit(EVENT_NAME_PART_WRITING, {traceId: getTraceId(1), partNo: 1});
             stream.end(body, () => {
-              emitter.emit(EVENT_NAME_PART_DONE, {partNo: 1});
+              emitter.emit(EVENT_NAME_PART_DONE, {traceId: getTraceId(1), partNo: 1});
             });
           } else {
-            emitter.emit(EVENT_NAME_PART_WRITING, {partNo: 1});
+            emitter.emit(EVENT_NAME_PART_WRITING, {traceId: getTraceId(1), partNo: 1});
             write(body, () => {
-              emitter.emit(EVENT_NAME_PART_DONE, {partNo: 1});
+              emitter.emit(EVENT_NAME_PART_DONE, {traceId: getTraceId(1), partNo: 1});
               lastWrittenPartNo = 1;
               nextPartNo = 2;
               partsToDownload = Math.ceil(bytesToDownload/partSizeInBytes);
