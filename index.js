@@ -529,16 +529,26 @@ function getAwsCredentials(v2AwsSdkCredentials, cb) {
   }
 }
 
-function getHostname(endpointHostname, cb) {
+function getHostname(region, endpointHostname, bucket, cb) {
+  const next = (region) => {
+    if (bucket.includes('.')) { // virtual-hosted-style is broken for buckets with a dot, fallback to path-style
+      cb(null, `s3.${region}.amazonaws.com`);
+    } else {
+      cb(null, `${bucket}.s3.${region}.amazonaws.com`);
+    }
+  };
   if (endpointHostname === undefined || endpointHostname === null) {
-    // TODO Switch to virtual-hosted–style requests as soon as bucket names with a dot are supported (https://docs.aws.amazon.com/AmazonS3/latest/userguide/VirtualHosting.html)
-    getAwsRegion((err, region) => {
-      if (err) {
-        cb(err);
-      } else {
-        cb(null, `s3.${region}.amazonaws.com`);
-      }
-    });
+    if (region === undefined || region === null) {
+      getAwsRegion((err, region) => {
+        if (err) {
+          cb(err);
+        } else {
+          next(region);
+        }
+      });
+    } else {
+      next(region);
+    }
   } else {
     cb(null, endpointHostname);
   }
@@ -562,7 +572,9 @@ function escapeKey(string) { // source https://github.com/aws/aws-sdk-js/blob/64
     });
 }
 
-function getObject({Bucket, Key, VersionId, PartNumber, Range}, {v2AwsSdkCredentials, endpointHostname, agent}, retryOptions, timeoutOptions, contextOptions, cb) {
+function getObject(params, s3Options, retryOptions, timeoutOptions, contextOptions, cb) {
+  const {Bucket, Key, VersionId, PartNumber, Range} = params;
+  const {region, v2AwsSdkCredentials, endpointHostname, agent} = s3Options;
   const ac = new AbortController();
   const qs = {};
   const headers = {};
@@ -575,7 +587,7 @@ function getObject({Bucket, Key, VersionId, PartNumber, Range}, {v2AwsSdkCredent
   if (Range !== undefined && Range !== null) {
     headers.Range = Range;
   }
-  getHostname(endpointHostname, (err, hostname) => {
+  getHostname(region, endpointHostname, Bucket, (err, hostname) => {
     if (err) {
       cb(err);
     } else {
@@ -583,10 +595,15 @@ function getObject({Bucket, Key, VersionId, PartNumber, Range}, {v2AwsSdkCredent
         if (err) {
           cb(err);
         } else {
+          let path = '';
+          if (!hostname.startsWith(`${Bucket}.`)) { // fallback to path-style if hostname does not start with bucket aka virtual-hosted–style
+            path += `/${Bucket}`;
+          }
+          path += `/${escapeKey(Key)}?${querystring.stringify(qs)}`;
           const options = aws4.sign({
             hostname,
             method: 'GET',
-            path: `/${Bucket}/${escapeKey(Key)}?${querystring.stringify(qs)}`,
+            path,
             headers,
             service: 's3',
             signal: ac.signal,
@@ -621,11 +638,15 @@ function getObject({Bucket, Key, VersionId, PartNumber, Range}, {v2AwsSdkCredent
                       cb(err);
                     } else {
                       if (result.Error && result.Error.Code && result.Error.Message) {
-                        const err = new Error(`${result.Error.Code}: ${result.Error.Message}`);
-                        err.statusCode = res.statusCode;
-                        err.body = body;
-                        err.code = result.Error.Code;
-                        cb(err);
+                        if (result.Error.Code === 'PermanentRedirect' && result.Error.Endpoint) {
+                          getObject(params, {...s3Options, endpointHostname: result.Error.Endpoint}, retryOptions, timeoutOptions, contextOptions, cb);
+                        } else {
+                          const err = new Error(`${result.Error.Code}: ${result.Error.Message}`);
+                          err.statusCode = res.statusCode;
+                          err.body = body;
+                          err.code = result.Error.Code;
+                          cb(err);
+                        }
                       } else {
                         const err = new Error(`unexpected S3 XML response (${res.statusCode}):\n${body.toString('utf8')}`);
                         err.statusCode = res.statusCode;
@@ -650,7 +671,7 @@ function getObject({Bucket, Key, VersionId, PartNumber, Range}, {v2AwsSdkCredent
   return ac;
 }
 
-exports.download = ({bucket, key, version}, {partSizeInMegabytes, concurrency, requestTimeoutInMilliseconds, resolveTimeoutInMilliseconds, connectionTimeoutInMilliseconds, readTimeoutInMilliseconds, dataTimeoutInMilliseconds, writeTimeoutInMilliseconds, v2AwsSdkCredentials, endpointHostname, agent}) => {
+exports.download = ({bucket, key, version}, {partSizeInMegabytes, concurrency, requestTimeoutInMilliseconds, resolveTimeoutInMilliseconds, connectionTimeoutInMilliseconds, readTimeoutInMilliseconds, dataTimeoutInMilliseconds, writeTimeoutInMilliseconds, region, v2AwsSdkCredentials, endpointHostname, agent}) => {
   if (concurrency < 1) {
     throw new Error('concurrency > 0');
   }
@@ -697,6 +718,7 @@ exports.download = ({bucket, key, version}, {partSizeInMegabytes, concurrency, r
     }
   }
 
+  const s3Options = {region, v2AwsSdkCredentials, endpointHostname, agent};
   const retryOptions = {maxAttempts: 5};
   const timeoutOptions = {requestTimeoutInMilliseconds, resolveTimeoutInMilliseconds, connectionTimeoutInMilliseconds, readTimeoutInMilliseconds, dataTimeoutInMilliseconds, writeTimeoutInMilliseconds};
   const downloadNo = lastDownloadNo++;
@@ -777,7 +799,7 @@ exports.download = ({bucket, key, version}, {partSizeInMegabytes, concurrency, r
       const endByte = Math.min(startByte+partSizeInBytes-1, bytesToDownload-1); // inclusive
       params.Range = `bytes=${startByte}-${endByte}`;
     }
-    const req = getObject(params, {v2AwsSdkCredentials, endpointHostname, agent}, retryOptions, timeoutOptions, {emitter, traceId: getTraceId(partNo)}, (err, data) => {
+    const req = getObject(params, s3Options, retryOptions, timeoutOptions, {emitter, traceId: getTraceId(partNo)}, (err, data) => {
       delete partsDownloading[partNo];
       if (err) {
         cb(err);
@@ -828,7 +850,7 @@ exports.download = ({bucket, key, version}, {partSizeInMegabytes, concurrency, r
           const endByte = partSizeInBytes-1; // inclusive
           params.Range = `bytes=0-${endByte}`;
         }
-        partsDownloading[1] = getObject(params, {v2AwsSdkCredentials, endpointHostname, agent}, retryOptions, timeoutOptions,  {emitter, traceId: `download=${downloadNo}:part=1`}, (err, data) => {
+        partsDownloading[1] = getObject(params, s3Options, retryOptions, timeoutOptions,  {emitter, traceId: `download=${downloadNo}:part=1`}, (err, data) => {
           delete partsDownloading[1];
           if (err) {
             if (err.code === 'InvalidRange') {

@@ -90,8 +90,9 @@ d.meta((err, metadata) => {
   * `readTimeoutInMilliseconds` `<number>` Maxium time to read the response body (optional, defaults to 300,000, 0 := no timeout)
   * `dataTimeoutInMilliseconds` `<number>` Maxium time between two data events while reading the response body (optional, defaults to 3,000, 0 := no timeout)
   * `writeTimeoutInMilliseconds` `<number>` Maxium time to write the request body (optional, defaults to 300,000, 0 := no timeout)
+  * `region` `<string>` (optional, defaults to [see AWS credentials & region](#aws-region))
   * `v2AwsSdkCredentials` `<AWS.Credentials>` (optional)
-  * `endpointHostname` `<string>` (optional, defaults to s3.${region}.amazonaws.com)
+  * `endpointHostname` `<string>` (optional, defaults to ${bucket}.s3.${region}.amazonaws.com or s3.${region}.amazonaws.com if the bucket contains a dot)
   * `agent` `<https.Agent>` (optional)
 * Returns:
   * `meta(cb)` `<Function>` Get meta-data before starting the download (downloads the first part and keeps the body in memory until download starts)
@@ -116,7 +117,7 @@ d.meta((err, metadata) => {
   * `once(eventName, listener)` See https://nodejs.org/api/events.html#emitteronceeventname-listener
   * `removeListener(eventName, listener)` See https://nodejs.org/api/events.html#emitterremovelistenereventname-listener 
 
-## AWS credentials & region
+## AWS credentials
 
 AWS credentials are fetched in the following order:
 
@@ -127,10 +128,13 @@ AWS credentials are fetched in the following order:
   * `AWS_SESSION_TOKEN` (optional)
 3. IMDSv2
 
+## AWS region
+
 AWS region is fetched in the following order:
 
-1. Environment variable `AWS_REGION`
-2. IMDSv2
+1. `options.region`
+2. Environment variable `AWS_REGION`
+3. IMDSv2
 
 ## Considerations
 
