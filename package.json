@@ -32,6 +32,9 @@
     "lru-cache": "11.1.0",
     "xml2js": "0.6.2"
   },
+  "engines": {
+    "node": ">=20"
+  },
   "c8": {
     "reporter": [
       "text",

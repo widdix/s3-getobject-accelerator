@@ -16,6 +16,7 @@ const EVENT_NAME_REQUEST_CONNECTED = 'request:connected';
 const EVENT_NAME_REQUEST_BODY_WRITING = 'request:body-writing';
 const EVENT_NAME_REQUEST_BODY_WRITTEN = 'request:body-written';
 const EVENT_NAME_REQUEST_BODY_READING = 'request:body-reading';
+const EVENT_NAME_REQUEST_BODY_READING_PROGRESS = 'request:body-reading-progress';
 const EVENT_NAME_REQUEST_BODY_READ = 'request:body-read';
 const EVENT_NAME_REQUEST_RETRYING = 'request:retrying';
 const EVENT_NAME_OBJECT_DOWNLOADING  = 'object:downloading';
@@ -32,6 +33,7 @@ const EVENT_NAMES = [
   EVENT_NAME_REQUEST_BODY_WRITING,
   EVENT_NAME_REQUEST_BODY_WRITTEN,
   EVENT_NAME_REQUEST_BODY_READING,
+  EVENT_NAME_REQUEST_BODY_READING_PROGRESS,
   EVENT_NAME_REQUEST_BODY_READ,
   EVENT_NAME_REQUEST_RETRYING,
   EVENT_NAME_OBJECT_DOWNLOADING,
@@ -41,6 +43,8 @@ const EVENT_NAMES = [
   EVENT_NAME_PART_DONE
 ];
 exports.EVENT_NAMES = EVENT_NAMES;
+
+const READ_STATS_SAMPLE_RATE_IN_SECONDS = 5;
 
 class RequestTimeoutError extends Error {
   constructor(message) {
@@ -139,6 +143,41 @@ function fetchResolver(timeoutInMilliseconds) {
   return resolver;
 }
 
+function calculateQuantile(sortedNumbers, q) {
+  const pos = (sortedNumbers.length - 1) * q;
+  const base = Math.floor(pos);
+  const rest = pos - base;
+  if (sortedNumbers[base + 1] !== undefined) {
+    return sortedNumbers[base] + rest * (sortedNumbers[base + 1] - sortedNumbers[base]);
+  } else {
+    return sortedNumbers[base];
+  }
+}
+
+function calculateStats(numbers) {
+  if (numbers.length === 0) {
+    return {};
+  }
+  const count = numbers.length;
+  const sum = numbers.reduce((acc, number) => acc+number, 0);
+  const mean = sum / count;
+  const min = Math.min(...numbers);
+  const max = Math.max(...numbers);
+  const sortedNumbers = numbers.toSorted(); 
+  const median = calculateQuantile(sortedNumbers, 0.5);
+  const p90 = calculateQuantile(sortedNumbers, 0.9);
+  const p99 = calculateQuantile(sortedNumbers, 0.99);
+  return {
+    count,
+    mean,
+    median,
+    p90,
+    p99,
+    min,
+    max
+  };
+}
+
 function request(nodemodule, requestOptions, body, timeoutOptions, contextOptions, cb) {
   const resolver = fetchResolver(timeoutOptions.resolveTimeoutInMilliseconds);
   const requestNo = lastRequestNo++;
@@ -217,12 +256,14 @@ function request(nodemodule, requestOptions, body, timeoutOptions, contextOption
   let dataTimeoutId;
   let readTimeoutId;
   let writeTimeoutId;
+  let readStatsIntervalId;
   let cbcalled = false;
   const clearTimeouts = () => {
     clearTimeout(requestTimeoutId);
     clearTimeout(dataTimeoutId);
     clearTimeout(readTimeoutId);
     clearTimeout(writeTimeoutId);
+    clearInterval(readStatsIntervalId);
   };
   contextOptions.emitter?.emit(EVENT_NAME_REQUEST_CONNECTING, {traceId, hostname: requestOptions.hostname, method: requestOptions.method, path: requestOptions.path});
   const req = nodemodule.request(requestOptions, (res) => {
@@ -247,9 +288,26 @@ function request(nodemodule, requestOptions, body, timeoutOptions, contextOption
       }
     };
     contextOptions.emitter?.emit(EVENT_NAME_REQUEST_BODY_READING, {traceId});
+    let readStatsBytes = 0;
+    let readStatsTimestamp = Date.now();
+    let readStatsIntervalBytesPerSecond = [];
+    const endStatsInterval = () => {
+      const now = Date.now();
+      const sampleWindowInMilliseconds = now-readStatsTimestamp;
+      const sampleWindowInSeconds = sampleWindowInMilliseconds/1000;
+      readStatsIntervalBytesPerSecond.push(readStatsBytes/sampleWindowInSeconds);
+      readStatsTimestamp = now;
+      readStatsBytes = 0;
+      return calculateStats(readStatsIntervalBytesPerSecond);
+    };
+    readStatsIntervalId = setInterval(() => {
+      const bytesPerSecond = endStatsInterval();
+      contextOptions.emitter?.emit(EVENT_NAME_REQUEST_BODY_READING_PROGRESS, {traceId, bytesPerSecond});
+    }, READ_STATS_SAMPLE_RATE_IN_SECONDS*1000);
     resetDataTimeout();
     res.on('data', chunk => {
       resetDataTimeout();
+      readStatsBytes += chunk.length;
       if (bodyChunks !== null) {
         bodyChunks.push(chunk);
         size += chunk.length;
@@ -259,7 +317,8 @@ function request(nodemodule, requestOptions, body, timeoutOptions, contextOption
       }
     });
     res.on('end', () => {
-      contextOptions.emitter?.emit(EVENT_NAME_REQUEST_BODY_READ, {traceId});
+      const bytesPerSecond = endStatsInterval();
+      contextOptions.emitter?.emit(EVENT_NAME_REQUEST_BODY_READ, {traceId, bytesPerSecond});
       clearTimeouts();
       if (cbcalled === false) {
         cbcalled = true;
@@ -638,7 +697,7 @@ function getObject(params, s3Options, retryOptions, timeoutOptions, contextOptio
                       cb(err);
                     } else {
                       if (result.Error && result.Error.Code && result.Error.Message) {
-                        if (result.Error.Code === 'PermanentRedirect' && result.Error.Endpoint) {
+                        if (result.Error.Code === 'PermanentRedirect' && result.Error.Endpoint) { // TODO use endpoint in all further parts to avoid running into this error for every part
                           getObject(params, {...s3Options, endpointHostname: result.Error.Endpoint}, retryOptions, timeoutOptions, contextOptions, cb);
                         } else {
                           const err = new Error(`${result.Error.Code}: ${result.Error.Message}`);
