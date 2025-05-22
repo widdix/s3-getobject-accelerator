@@ -697,7 +697,9 @@ function getObject(params, s3Options, retryOptions, timeoutOptions, contextOptio
                       cb(err);
                     } else {
                       if (result.Error && result.Error.Code && result.Error.Message) {
-                        if (result.Error.Code === 'PermanentRedirect' && result.Error.Endpoint) { // TODO use endpoint in all further parts to avoid running into this error for every part
+                        if ((result.Error.Code === 'PermanentRedirect' || result.Error.Code === 'IllegalLocationConstraintException') && res.headers['x-amz-bucket-region']) { // TODO use region in all further parts to avoid running into this error for every part
+                          getObject(params, {...s3Options, region: res.headers['x-amz-bucket-region']}, retryOptions, timeoutOptions, contextOptions, cb);
+                        } else if (result.Error.Code === 'PermanentRedirect' && result.Error.Endpoint) { // TODO use endpoint in all further parts to avoid running into this error for every part
                           getObject(params, {...s3Options, endpointHostname: result.Error.Endpoint}, retryOptions, timeoutOptions, contextOptions, cb);
                         } else {
                           const err = new Error(`${result.Error.Code}: ${result.Error.Message}`);
