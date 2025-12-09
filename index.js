@@ -183,6 +183,9 @@ function request(nodemodule, requestOptions, body, timeoutOptions, contextOption
   const requestNo = lastRequestNo++;
   const traceId = (contextOptions.traceId) ? `${contextOptions.traceId}:request=${requestNo}` : `request=${requestNo}`;
 
+  const abortListener = () => {
+    resolver.cancel();
+  };
   requestOptions.lookup = (hostname, options, cb) => {
     if (typeof options === 'function') {
       cb = options;
@@ -222,6 +225,9 @@ function request(nodemodule, requestOptions, body, timeoutOptions, contextOption
 
     contextOptions.emitter?.emit(EVENT_NAME_REQUEST_NAME_RESOLVING, {traceId, hostname, family});
     resolver[fn](hostname, {ttl: true}, (err, records) => {
+      if (requestOptions.signal !== undefined) {
+        requestOptions.signal.removeEventListener('abort', abortListener);
+      }
       if (err) {
         cb(err);
       } else {
@@ -245,9 +251,7 @@ function request(nodemodule, requestOptions, body, timeoutOptions, contextOption
     });
   };
   if (requestOptions.signal !== undefined) {
-    requestOptions.signal.addEventListener('abort', () => {
-      resolver.cancel();
-    }, { once: true });
+    requestOptions.signal.addEventListener('abort', abortListener, { once: true });
   }
   if (timeoutOptions.connectionTimeoutInMilliseconds > 0) {
     requestOptions.timeout = timeoutOptions.connectionTimeoutInMilliseconds;
@@ -371,17 +375,19 @@ function retryrequest(nodemodule, requestOptions, body, retryOptions, timeoutOpt
       const maxRetryDelayInSeconds = ('maxRetryDelayInSeconds' in retryOptions) ? retryOptions.maxRetryDelayInSeconds : MAX_RETRY_DELAY_IN_SECONDS;
       const delayInMilliseconds = Math.min(Math.random() * Math.pow(2, attempt-1), maxRetryDelayInSeconds) * 1000;
       contextOptions.emitter?.emit(EVENT_NAME_REQUEST_RETRYING, {traceId: getTraceId(attempt), attempt, delayInMilliseconds, err});
-      setTimeout(() => {
-        if (requestOptions.signal) {
-          if (requestOptions.signal.aborted === true) {
-            cb(requestOptions.signal.reason);
-          } else {
-            req(attempt);
-          }
-        } else {
-          req(attempt);
+      const abortListener = () => {
+        clearTimeout(timeoutId);
+        cb(requestOptions.signal.reason);
+      };
+      const timeoutId = setTimeout(() => {
+        if (requestOptions.signal !== undefined) {
+          requestOptions.signal.removeEventListener('abort', abortListener);
         }
+        req(attempt);
       }, delayInMilliseconds);
+      if (requestOptions.signal !== undefined) {
+        requestOptions.signal.addEventListener('abort', abortListener, { once: true });
+      }
     } else {
       cb(err);
     }
@@ -809,7 +815,9 @@ exports.download = ({bucket, key, version}, {partSizeInMegabytes, concurrency, r
     if (aborted === false) {
       aborted = true;
       Object.values(partsDownloading).forEach(req => req.abort());
-      stream.destroy(err);
+      if (stream !== null) {
+        stream.destroy(err);
+      }
     }
   }
 
@@ -1004,6 +1012,7 @@ exports.download = ({bucket, key, version}, {partSizeInMegabytes, concurrency, r
     },
     readStream: () => {
       if (started === false)  {
+        started = true;
         stream = new PassThrough();
         start();
       }
@@ -1011,6 +1020,7 @@ exports.download = ({bucket, key, version}, {partSizeInMegabytes, concurrency, r
     },
     file: (path, cb) => {
       if (started === false)  {
+        started = true;
         stream = createWriteStream(path);
         start();
       }
