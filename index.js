@@ -564,7 +564,7 @@ function refreshAwsCredentials() {
   return imdsCredentialsCache;
 }
 
-function getAwsCredentials(v2AwsSdkCredentials, cb) {
+function getAwsCredentials(v2AwsSdkCredentials, v3AwsSdkCredentials, cb) {
   if (!(v2AwsSdkCredentials === undefined || v2AwsSdkCredentials === null)) {
     v2AwsSdkCredentials.get((err) => {
       if (err) {
@@ -580,13 +580,28 @@ function getAwsCredentials(v2AwsSdkCredentials, cb) {
         cb(null, credentials);
       }
     });
+  } else if (!(v3AwsSdkCredentials === undefined || v3AwsSdkCredentials === null)) {
+    v3AwsSdkCredentials()
+      .then((res) => {
+        const credentials = {
+          accessKeyId: res.accessKeyId,
+          secretAccessKey: res.secretAccessKey
+        };
+        if (res.sessionToken) {
+          credentials.sessionToken = res.sessionToken;
+        }
+        cb(null, credentials);
+      })
+      .catch((err) => {
+        cb(err);
+      });
   } else if (imdsCredentialsCache === undefined) {
     refreshAwsCredentials().then(credentials => cb(null, credentials)).catch(cb);
   } else {
     imdsCredentialsCache.then(credentials => {
       if ((Date.now()-credentials.cachedAt) > AWS_CREDENTIALS_MAX_AGE_IN_MILLISECONDS) {
         imdsCredentialsCache = undefined;
-        getAwsCredentials(v2AwsSdkCredentials, cb);
+        getAwsCredentials(v2AwsSdkCredentials, v3AwsSdkCredentials, cb);
       } else {
         cb(null, credentials);
       }
@@ -639,7 +654,7 @@ function escapeKey(string) { // source https://github.com/aws/aws-sdk-js/blob/64
 
 function getObject(params, s3Options, retryOptions, timeoutOptions, contextOptions, cb) {
   const {Bucket, Key, VersionId, PartNumber, Range} = params;
-  const {region, v2AwsSdkCredentials, endpointHostname, agent} = s3Options;
+  const {region, v2AwsSdkCredentials, endpointHostname, agent, v3AwsSdkCredentials} = s3Options;
   const ac = new AbortController();
   const qs = {};
   const headers = {};
@@ -656,7 +671,7 @@ function getObject(params, s3Options, retryOptions, timeoutOptions, contextOptio
     if (err) {
       cb(err);
     } else {
-      getAwsCredentials(v2AwsSdkCredentials, (err, credentials) => {
+      getAwsCredentials(v2AwsSdkCredentials, v3AwsSdkCredentials, (err, credentials) => {
         if (err) {
           cb(err);
         } else {
@@ -738,7 +753,7 @@ function getObject(params, s3Options, retryOptions, timeoutOptions, contextOptio
   return ac;
 }
 
-exports.download = ({bucket, key, version}, {partSizeInMegabytes, concurrency, requestTimeoutInMilliseconds, resolveTimeoutInMilliseconds, connectionTimeoutInMilliseconds, readTimeoutInMilliseconds, dataTimeoutInMilliseconds, writeTimeoutInMilliseconds, region, v2AwsSdkCredentials, endpointHostname, agent}) => {
+exports.download = ({bucket, key, version}, {partSizeInMegabytes, concurrency, requestTimeoutInMilliseconds, resolveTimeoutInMilliseconds, connectionTimeoutInMilliseconds, readTimeoutInMilliseconds, dataTimeoutInMilliseconds, writeTimeoutInMilliseconds, region, v2AwsSdkCredentials, endpointHostname, agent, v3AwsSdkCredentials}) => {
   if (concurrency < 1) {
     throw new Error('concurrency > 0');
   }
@@ -785,7 +800,13 @@ exports.download = ({bucket, key, version}, {partSizeInMegabytes, concurrency, r
     }
   }
 
-  const s3Options = {region, v2AwsSdkCredentials, endpointHostname, agent};
+  if (!(v3AwsSdkCredentials === undefined || v3AwsSdkCredentials === null)) {
+    if (typeof v3AwsSdkCredentials !== 'function') {
+      throw new Error('invalid v3AwsSdkCredentials');
+    }
+  }
+
+  const s3Options = {region, v2AwsSdkCredentials, endpointHostname, agent, v3AwsSdkCredentials};
   const retryOptions = {maxAttempts: 5};
   const timeoutOptions = {requestTimeoutInMilliseconds, resolveTimeoutInMilliseconds, connectionTimeoutInMilliseconds, readTimeoutInMilliseconds, dataTimeoutInMilliseconds, writeTimeoutInMilliseconds};
   const downloadNo = lastDownloadNo++;

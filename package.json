@@ -17,6 +17,7 @@
   },
   "homepage": "https://github.com/widdix/s3-getobject-accelerator#readme",
   "devDependencies": {
+    "@aws-sdk/client-s3": "^3.978.0",
     "@eslint/eslintrc": "3.3.3",
     "@eslint/js": "9.39.1",
     "aws-sdk": "2.1692.0",
