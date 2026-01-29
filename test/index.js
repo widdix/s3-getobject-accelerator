@@ -5,6 +5,7 @@ const fs = require('node:fs');
 const mockfs = require('mock-fs');
 const nock = require('nock');
 const AWS = require('aws-sdk');
+const {S3Client} = require('@aws-sdk/client-s3');
 const {clearCache, request, retryrequest, imds, download} = require('../index.js');
 
 function nockPart(partSize, partNumber, parts, bytes, hostname, optionalDelay, optionalPathPrefix) {
@@ -1846,6 +1847,47 @@ describe('index', () => {
           const v2AwsSdkCredentials = new AWS.Credentials('AWS_ACCESS_KEY_ID', 'AWS_SECRET_ACCESS_KEY');
           pipeline(
             download({bucket:'bucket', key: 'key', version: 'version'}, {partSizeInMegabytes: 8, concurrency: 4, v2AwsSdkCredentials}).readStream(),
+            fs.createWriteStream('/tmp/test'),
+            (err) => {
+              if (err) {
+                done(err);
+              } else {
+                assert.ok(nock.isDone());
+                const {size} = fs.statSync('/tmp/test');
+                assert.deepStrictEqual(size, bytes);
+                done();
+              }
+            }
+          );
+        });
+      });
+    });
+    describe('credentials via options.v3AwsSdkCredentials', () => {
+      before(() => {
+        nock.disableNetConnect();
+        process.env.AWS_REGION = 'eu-west-1';
+      });
+      after(() => {
+        nock.enableNetConnect();
+        delete process.env.AWS_REGION;
+      });
+      afterEach(() => {
+        mockfs.restore();
+        nock.cleanAll();
+        clearCache();
+      });
+      describe('readStream', () => {
+        it('happy', (done) => {
+          const bytes = 8000000;
+          nockRange(0, 7999999, bytes, 'bucket.s3.eu-west-1.amazonaws.com');
+          mockfs({
+            '/tmp': {
+            }
+          });
+          const s3 = new S3Client({credentials: {accessKeyId: 'AWS_ACCESS_KEY_ID', secretAccessKey: 'AWS_SECRET_ACCESS_KEY'}});
+          const v3AwsSdkCredentials = s3.config.credentials;
+          pipeline(
+            download({bucket:'bucket', key: 'key', version: 'version'}, {partSizeInMegabytes: 8, concurrency: 4, v3AwsSdkCredentials}).readStream(),
             fs.createWriteStream('/tmp/test'),
             (err) => {
               if (err) {
