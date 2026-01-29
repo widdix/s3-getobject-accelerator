@@ -92,6 +92,7 @@ d.meta((err, metadata) => {
   * `writeTimeoutInMilliseconds` `<number>` Maxium time to write the request body (optional, defaults to 300,000, 0 := no timeout)
   * `region` `<string>` (optional, defaults to [see AWS credentials & region](#aws-region))
   * `v2AwsSdkCredentials` `<AWS.Credentials>` (optional)
+  * `v3AwsSdkCredentials` `S3Client().config.credentials` (optional)
   * `endpointHostname` `<string>` (optional, defaults to ${bucket}.s3.${region}.amazonaws.com or s3.${region}.amazonaws.com if the bucket contains a dot)
   * `agent` `<https.Agent>` (optional)
 * Returns:
