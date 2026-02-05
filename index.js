@@ -727,6 +727,7 @@ function getObject(params, s3Options, retryOptions, timeoutOptions, contextOptio
                           err.statusCode = res.statusCode;
                           err.body = body;
                           err.code = result.Error.Code;
+                          err.name = result.Error.Code;
                           cb(err);
                         }
                       } else {
