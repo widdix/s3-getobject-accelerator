@@ -373,7 +373,9 @@ function retryrequest(nodemodule, requestOptions, body, retryOptions, timeoutOpt
     const attempt = erredAttempt+1;
     if (attempt <= retryOptions.maxAttempts) {
       const maxRetryDelayInSeconds = ('maxRetryDelayInSeconds' in retryOptions) ? retryOptions.maxRetryDelayInSeconds : MAX_RETRY_DELAY_IN_SECONDS;
-      const delayInMilliseconds = Math.min(Math.random() * Math.pow(2, attempt-1), maxRetryDelayInSeconds) * 1000;
+      const retryAfterSeconds = parseInt(err.headers?.['retry-after'], 10); // NaN for the HTTP-date variant of the header
+      const delayInSeconds = Number.isFinite(retryAfterSeconds) ? Math.min(retryAfterSeconds, maxRetryDelayInSeconds) : Math.min(Math.random() * Math.pow(2, attempt-1), maxRetryDelayInSeconds);
+      const delayInMilliseconds = delayInSeconds * 1000;
       contextOptions.emitter?.emit(EVENT_NAME_REQUEST_RETRYING, {traceId: getTraceId(attempt), attempt, delayInMilliseconds, err});
       const abortListener = () => {
         clearTimeout(timeoutId);
@@ -405,6 +407,7 @@ function retryrequest(nodemodule, requestOptions, body, retryOptions, timeoutOpt
           if (res.headers['content-type'] === 'application/xml') {
             const err = new Error(`status code: ${res.statusCode}\n${body.toString('utf8')}`);
             err.statusCode = res.statusCode;
+            err.headers = res.headers;
             err.body = body;
             retry(attempt, err);
           } else {
@@ -414,6 +417,7 @@ function retryrequest(nodemodule, requestOptions, body, retryOptions, timeoutOpt
             }
             const err = new Error(message);
             err.statusCode = res.statusCode;
+            err.headers = res.headers;
             err.body = body;
             retry(attempt, err);
           }

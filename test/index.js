@@ -413,6 +413,96 @@ describe('index', () => {
         }
       });
     });
+    it('retry honors Retry-After header', (done) => {
+      nock('http://localhost')
+        .post('/api')
+        .reply(429, '', {'Retry-After': '1'})
+        .post('/api')
+        .reply(204);
+
+      const start = Date.now();
+      retryrequest(http, {
+        hostname: 'localhost',
+        method: 'POST',
+        path: '/api'
+      }, Buffer.alloc(10), {maxAttempts: 3}, {}, {}, (err, res) => {
+        if (err) {
+          done(err);
+        } else {
+          assert.ok(nock.isDone());
+          assert.deepStrictEqual(res.statusCode, 204);
+          assert.ok(Date.now() - start >= 1000);
+          done();
+        }
+      });
+    });
+    it('retry caps Retry-After header at maxRetryDelayInSeconds', (done) => {
+      nock('http://localhost')
+        .post('/api')
+        .reply(429, '', {'Retry-After': '10'})
+        .post('/api')
+        .reply(204);
+
+      const start = Date.now();
+      retryrequest(http, {
+        hostname: 'localhost',
+        method: 'POST',
+        path: '/api'
+      }, Buffer.alloc(10), {maxAttempts: 3, maxRetryDelayInSeconds: 1}, {}, {}, (err, res) => {
+        if (err) {
+          done(err);
+        } else {
+          assert.ok(nock.isDone());
+          assert.deepStrictEqual(res.statusCode, 204);
+          const elapsed = Date.now() - start;
+          assert.ok(elapsed >= 1000 && elapsed < 10000);
+          done();
+        }
+      });
+    });
+    it('retry ignores HTTP-date Retry-After header', (done) => {
+      nock('http://localhost')
+        .post('/api')
+        .reply(429, '', {'Retry-After': 'Wed, 08 Jul 2026 07:28:00 GMT'})
+        .post('/api')
+        .reply(204);
+
+      retryrequest(http, {
+        hostname: 'localhost',
+        method: 'POST',
+        path: '/api'
+      }, Buffer.alloc(10), {maxAttempts: 3, maxRetryDelayInSeconds: 1}, {}, {}, (err, res) => {
+        if (err) {
+          done(err);
+        } else {
+          assert.ok(nock.isDone());
+          assert.deepStrictEqual(res.statusCode, 204);
+          done();
+        }
+      });
+    });
+    it('retry fail exposes statusCode, headers, and body', (done) => {
+      nock('http://localhost')
+        .post('/api')
+        .times(3)
+        .reply(429, 'rate limited', {'Retry-After': '1', 'content-type': 'text/plain'});
+
+      retryrequest(http, {
+        hostname: 'localhost',
+        method: 'POST',
+        path: '/api'
+      }, Buffer.alloc(10), {maxAttempts: 3}, {}, {}, (err) => {
+        if (err) {
+          assert.ok(nock.isDone());
+          assert.deepStrictEqual(err.statusCode, 429);
+          assert.deepStrictEqual(err.headers['retry-after'], '1');
+          assert.deepStrictEqual(err.body.toString('utf8'), 'rate limited');
+          done();
+        } else {
+          done(new Error('must error'));
+        }
+      });
+    });
     describe('timeout', () => {
       it('connection', (done) => {
         nock('http://localhost')
