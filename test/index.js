@@ -858,6 +858,100 @@ describe('index', () => {
                 }
               );
             });
+            it('dualstack', (done) => {
+              const bytes = 1000000;
+              nockPart(1000000, 1, 1, bytes, 'bucket.s3.dualstack.eu-west-1.amazonaws.com');
+              mockfs({
+                '/tmp': {
+                }
+              });
+              pipeline(
+                download({bucket:'bucket', key: 'key', version: 'version'}, {concurrency: 4, dualstack: true}).readStream(),
+                fs.createWriteStream('/tmp/test'),
+                (err) => {
+                  if (err) {
+                    done(err);
+                  } else {
+                    assert.ok(nock.isDone());
+                    const {size} = fs.statSync('/tmp/test');
+                    assert.deepStrictEqual(size, bytes);
+                    done();
+                  }
+                }
+              );
+            });
+            it('dualstack with region and family', (done) => {
+              const bytes = 1000000;
+              nockPart(1000000, 1, 1, bytes, 'bucket.s3.dualstack.us-west-2.amazonaws.com');
+              mockfs({
+                '/tmp': {
+                }
+              });
+              pipeline(
+                download({bucket:'bucket', key: 'key', version: 'version'}, {concurrency: 4, dualstack: true, region: 'us-west-2', family: 6}).readStream(),
+                fs.createWriteStream('/tmp/test'),
+                (err) => {
+                  if (err) {
+                    done(err);
+                  } else {
+                    assert.ok(nock.isDone());
+                    const {size} = fs.statSync('/tmp/test');
+                    assert.deepStrictEqual(size, bytes);
+                    done();
+                  }
+                }
+              );
+            });
+            it('dualstack path style fallback when bucket contains dot', (done) => {
+              const bytes = 1000000;
+              nockPart(1000000, 1, 1, bytes, 's3.dualstack.eu-west-1.amazonaws.com', undefined, '/bucket.com');
+              mockfs({
+                '/tmp': {
+                }
+              });
+              pipeline(
+                download({bucket:'bucket.com', key: 'key', version: 'version'}, {concurrency: 4, dualstack: true}).readStream(),
+                fs.createWriteStream('/tmp/test'),
+                (err) => {
+                  if (err) {
+                    done(err);
+                  } else {
+                    assert.ok(nock.isDone());
+                    const {size} = fs.statSync('/tmp/test');
+                    assert.deepStrictEqual(size, bytes);
+                    done();
+                  }
+                }
+              );
+            });
+            it('dualstack is ignored with endpointHostname', (done) => {
+              const bytes = 1000000;
+              nockPart(1000000, 1, 1, bytes, 's3endpoint.com', undefined, '/bucket');
+              mockfs({
+                '/tmp': {
+                }
+              });
+              pipeline(
+                download({bucket:'bucket', key: 'key', version: 'version'}, {concurrency: 4, dualstack: true, endpointHostname: 's3endpoint.com'}).readStream(),
+                fs.createWriteStream('/tmp/test'),
+                (err) => {
+                  if (err) {
+                    done(err);
+                  } else {
+                    assert.ok(nock.isDone());
+                    const {size} = fs.statSync('/tmp/test');
+                    assert.deepStrictEqual(size, bytes);
+                    done();
+                  }
+                }
+              );
+            });
+            it('invalid dualstack', () => {
+              assert.throws(() => download({bucket:'bucket', key: 'key'}, {concurrency: 4, dualstack: 'true'}), /invalid dualstack/);
+            });
+            it('invalid family', () => {
+              assert.throws(() => download({bucket:'bucket', key: 'key'}, {concurrency: 4, family: 0}), /invalid family/);
+            });
             it('region', (done) => {
               const bytes = 1000000;
               nockPart(1000000, 1, 1, bytes, 'bucket.s3.us-west-2.amazonaws.com');

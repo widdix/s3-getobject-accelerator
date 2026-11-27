@@ -94,6 +94,8 @@ d.meta((err, metadata) => {
   * `v2AwsSdkCredentials` `<AWS.Credentials>` (optional)
   * `v3AwsSdkCredentials` `S3Client().config.credentials` (optional)
   * `endpointHostname` `<string>` (optional, defaults to ${bucket}.s3.${region}.amazonaws.com or s3.${region}.amazonaws.com if the bucket contains a dot)
+  * `dualstack` `<boolean>` Use the S3 dual-stack endpoint ${bucket}.s3.dualstack.${region}.amazonaws.com that resolves to IPv4 and IPv6 addresses (optional, defaults to false, ignored if `endpointHostname` is set)
+  * `family` `<number>` IP address family used to resolve the hostname: 4 resolves A records, 6 resolves AAAA records (optional, defaults to 4)
   * `agent` `<https.Agent>` (optional)
 * Returns:
   * `meta(cb)` `<Function>` Get meta-data before starting the download (downloads the first part and keeps the body in memory until download starts)
