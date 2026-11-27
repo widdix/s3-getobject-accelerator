@@ -94,6 +94,7 @@ d.meta((err, metadata) => {
   * `v2AwsSdkCredentials` `<AWS.Credentials>` (optional)
   * `v3AwsSdkCredentials` `S3Client().config.credentials` (optional)
   * `endpointHostname` `<string>` (optional, defaults to ${bucket}.s3.${region}.amazonaws.com or s3.${region}.amazonaws.com if the bucket contains a dot)
+  * `ipv6` `<boolean>` Connect via IPv6: resolves AAAA records instead of A records and uses the S3 dual-stack endpoint ${bucket}.s3.dualstack.${region}.amazonaws.com unless `endpointHostname` is set, which must have an AAAA record (optional, defaults to false)
   * `agent` `<https.Agent>` (optional)
 * Returns:
   * `meta(cb)` `<Function>` Get meta-data before starting the download (downloads the first part and keeps the body in memory until download starts)

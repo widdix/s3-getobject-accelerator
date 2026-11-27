@@ -858,6 +858,97 @@ describe('index', () => {
                 }
               );
             });
+            it('ipv6', (done) => {
+              const bytes = 1000000;
+              nockPart(1000000, 1, 1, bytes, 'bucket.s3.dualstack.eu-west-1.amazonaws.com');
+              mockfs({
+                '/tmp': {
+                }
+              });
+              pipeline(
+                download({bucket:'bucket', key: 'key', version: 'version'}, {concurrency: 4, ipv6: true}).readStream(),
+                fs.createWriteStream('/tmp/test'),
+                (err) => {
+                  if (err) {
+                    done(err);
+                  } else {
+                    assert.ok(nock.isDone());
+                    const {size} = fs.statSync('/tmp/test');
+                    assert.deepStrictEqual(size, bytes);
+                    done();
+                  }
+                }
+              );
+            });
+            it('ipv6 with region', (done) => {
+              const bytes = 1000000;
+              nockPart(1000000, 1, 1, bytes, 'bucket.s3.dualstack.us-west-2.amazonaws.com');
+              mockfs({
+                '/tmp': {
+                }
+              });
+              pipeline(
+                download({bucket:'bucket', key: 'key', version: 'version'}, {concurrency: 4, ipv6: true, region: 'us-west-2'}).readStream(),
+                fs.createWriteStream('/tmp/test'),
+                (err) => {
+                  if (err) {
+                    done(err);
+                  } else {
+                    assert.ok(nock.isDone());
+                    const {size} = fs.statSync('/tmp/test');
+                    assert.deepStrictEqual(size, bytes);
+                    done();
+                  }
+                }
+              );
+            });
+            it('ipv6 path style fallback when bucket contains dot', (done) => {
+              const bytes = 1000000;
+              nockPart(1000000, 1, 1, bytes, 's3.dualstack.eu-west-1.amazonaws.com', undefined, '/bucket.com');
+              mockfs({
+                '/tmp': {
+                }
+              });
+              pipeline(
+                download({bucket:'bucket.com', key: 'key', version: 'version'}, {concurrency: 4, ipv6: true}).readStream(),
+                fs.createWriteStream('/tmp/test'),
+                (err) => {
+                  if (err) {
+                    done(err);
+                  } else {
+                    assert.ok(nock.isDone());
+                    const {size} = fs.statSync('/tmp/test');
+                    assert.deepStrictEqual(size, bytes);
+                    done();
+                  }
+                }
+              );
+            });
+            it('ipv6 with endpointHostname', (done) => {
+              const bytes = 1000000;
+              nockPart(1000000, 1, 1, bytes, 's3endpoint.com', undefined, '/bucket');
+              mockfs({
+                '/tmp': {
+                }
+              });
+              pipeline(
+                download({bucket:'bucket', key: 'key', version: 'version'}, {concurrency: 4, ipv6: true, endpointHostname: 's3endpoint.com'}).readStream(),
+                fs.createWriteStream('/tmp/test'),
+                (err) => {
+                  if (err) {
+                    done(err);
+                  } else {
+                    assert.ok(nock.isDone());
+                    const {size} = fs.statSync('/tmp/test');
+                    assert.deepStrictEqual(size, bytes);
+                    done();
+                  }
+                }
+              );
+            });
+            it('invalid ipv6', () => {
+              assert.throws(() => download({bucket:'bucket', key: 'key'}, {concurrency: 4, ipv6: 'true'}), /invalid ipv6/);
+            });
             it('region', (done) => {
               const bytes = 1000000;
               nockPart(1000000, 1, 1, bytes, 'bucket.s3.us-west-2.amazonaws.com');
