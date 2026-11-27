@@ -613,9 +613,9 @@ function getAwsCredentials(v2AwsSdkCredentials, v3AwsSdkCredentials, cb) {
   }
 }
 
-function getHostname(region, endpointHostname, dualstack, bucket, cb) {
+function getHostname(region, endpointHostname, ipv6, bucket, cb) {
   const next = (region) => {
-    const s3 = (dualstack === true) ? 's3.dualstack' : 's3'; // the dual-stack endpoint resolves to IPv4 and IPv6 addresses, the default endpoint to IPv4 addresses only
+    const s3 = (ipv6 === true) ? 's3.dualstack' : 's3'; // the dual-stack endpoint resolves to IPv4 and IPv6 addresses, the default endpoint to IPv4 addresses only
     if (bucket.includes('.')) { // virtual-hosted-style is broken for buckets with a dot, fallback to path-style
       cb(null, `${s3}.${region}.amazonaws.com`);
     } else {
@@ -659,7 +659,7 @@ function escapeKey(string) { // source https://github.com/aws/aws-sdk-js/blob/64
 
 function getObject(params, s3Options, retryOptions, timeoutOptions, contextOptions, cb) {
   const {Bucket, Key, VersionId, PartNumber, Range} = params;
-  const {region, v2AwsSdkCredentials, endpointHostname, dualstack, family, agent, v3AwsSdkCredentials} = s3Options;
+  const {region, v2AwsSdkCredentials, endpointHostname, ipv6, agent, v3AwsSdkCredentials} = s3Options;
   const ac = new AbortController();
   const qs = {};
   const headers = {};
@@ -672,7 +672,7 @@ function getObject(params, s3Options, retryOptions, timeoutOptions, contextOptio
   if (Range !== undefined && Range !== null) {
     headers.Range = Range;
   }
-  getHostname(region, endpointHostname, dualstack, Bucket, (err, hostname) => {
+  getHostname(region, endpointHostname, ipv6, Bucket, (err, hostname) => {
     if (err) {
       cb(err);
     } else {
@@ -694,8 +694,8 @@ function getObject(params, s3Options, retryOptions, timeoutOptions, contextOptio
             signal: ac.signal,
             agent
           }, credentials);
-          if (!(family === undefined || family === null)) {
-            options.family = family; // IP address family used to resolve the hostname (see lookup in request)
+          if (ipv6 === true) {
+            options.family = 6; // resolve AAAA records instead of A records (see lookup in request)
           }
           retryrequest(https, options, undefined, retryOptions, timeoutOptions, contextOptions, (err, res, body) => {
             if (err) {
@@ -762,7 +762,7 @@ function getObject(params, s3Options, retryOptions, timeoutOptions, contextOptio
   return ac;
 }
 
-exports.download = ({bucket, key, version}, {partSizeInMegabytes, concurrency, requestTimeoutInMilliseconds, resolveTimeoutInMilliseconds, connectionTimeoutInMilliseconds, readTimeoutInMilliseconds, dataTimeoutInMilliseconds, writeTimeoutInMilliseconds, region, v2AwsSdkCredentials, endpointHostname, dualstack, family, agent, v3AwsSdkCredentials}) => {
+exports.download = ({bucket, key, version}, {partSizeInMegabytes, concurrency, requestTimeoutInMilliseconds, resolveTimeoutInMilliseconds, connectionTimeoutInMilliseconds, readTimeoutInMilliseconds, dataTimeoutInMilliseconds, writeTimeoutInMilliseconds, region, v2AwsSdkCredentials, endpointHostname, ipv6, agent, v3AwsSdkCredentials}) => {
   if (concurrency < 1) {
     throw new Error('concurrency > 0');
   }
@@ -803,15 +803,9 @@ exports.download = ({bucket, key, version}, {partSizeInMegabytes, concurrency, r
     throw new Error('writeTimeoutInMilliseconds >= 0');
   }
 
-  if (!(dualstack === undefined || dualstack === null)) {
-    if (typeof dualstack !== 'boolean') {
-      throw new Error('invalid dualstack');
-    }
-  }
-
-  if (!(family === undefined || family === null)) {
-    if (family !== 4 && family !== 6) {
-      throw new Error('invalid family');
+  if (!(ipv6 === undefined || ipv6 === null)) {
+    if (typeof ipv6 !== 'boolean') {
+      throw new Error('invalid ipv6');
     }
   }
 
@@ -827,7 +821,7 @@ exports.download = ({bucket, key, version}, {partSizeInMegabytes, concurrency, r
     }
   }
 
-  const s3Options = {region, v2AwsSdkCredentials, endpointHostname, dualstack, family, agent, v3AwsSdkCredentials};
+  const s3Options = {region, v2AwsSdkCredentials, endpointHostname, ipv6, agent, v3AwsSdkCredentials};
   const retryOptions = {maxAttempts: 5};
   const timeoutOptions = {requestTimeoutInMilliseconds, resolveTimeoutInMilliseconds, connectionTimeoutInMilliseconds, readTimeoutInMilliseconds, dataTimeoutInMilliseconds, writeTimeoutInMilliseconds};
   const downloadNo = lastDownloadNo++;

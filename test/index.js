@@ -858,7 +858,7 @@ describe('index', () => {
                 }
               );
             });
-            it('dualstack', (done) => {
+            it('ipv6', (done) => {
               const bytes = 1000000;
               nockPart(1000000, 1, 1, bytes, 'bucket.s3.dualstack.eu-west-1.amazonaws.com');
               mockfs({
@@ -866,7 +866,7 @@ describe('index', () => {
                 }
               });
               pipeline(
-                download({bucket:'bucket', key: 'key', version: 'version'}, {concurrency: 4, dualstack: true}).readStream(),
+                download({bucket:'bucket', key: 'key', version: 'version'}, {concurrency: 4, ipv6: true}).readStream(),
                 fs.createWriteStream('/tmp/test'),
                 (err) => {
                   if (err) {
@@ -880,7 +880,7 @@ describe('index', () => {
                 }
               );
             });
-            it('dualstack with region and family', (done) => {
+            it('ipv6 with region', (done) => {
               const bytes = 1000000;
               nockPart(1000000, 1, 1, bytes, 'bucket.s3.dualstack.us-west-2.amazonaws.com');
               mockfs({
@@ -888,7 +888,7 @@ describe('index', () => {
                 }
               });
               pipeline(
-                download({bucket:'bucket', key: 'key', version: 'version'}, {concurrency: 4, dualstack: true, region: 'us-west-2', family: 6}).readStream(),
+                download({bucket:'bucket', key: 'key', version: 'version'}, {concurrency: 4, ipv6: true, region: 'us-west-2'}).readStream(),
                 fs.createWriteStream('/tmp/test'),
                 (err) => {
                   if (err) {
@@ -902,7 +902,7 @@ describe('index', () => {
                 }
               );
             });
-            it('dualstack path style fallback when bucket contains dot', (done) => {
+            it('ipv6 path style fallback when bucket contains dot', (done) => {
               const bytes = 1000000;
               nockPart(1000000, 1, 1, bytes, 's3.dualstack.eu-west-1.amazonaws.com', undefined, '/bucket.com');
               mockfs({
@@ -910,7 +910,7 @@ describe('index', () => {
                 }
               });
               pipeline(
-                download({bucket:'bucket.com', key: 'key', version: 'version'}, {concurrency: 4, dualstack: true}).readStream(),
+                download({bucket:'bucket.com', key: 'key', version: 'version'}, {concurrency: 4, ipv6: true}).readStream(),
                 fs.createWriteStream('/tmp/test'),
                 (err) => {
                   if (err) {
@@ -924,7 +924,7 @@ describe('index', () => {
                 }
               );
             });
-            it('dualstack is ignored with endpointHostname', (done) => {
+            it('ipv6 with endpointHostname', (done) => {
               const bytes = 1000000;
               nockPart(1000000, 1, 1, bytes, 's3endpoint.com', undefined, '/bucket');
               mockfs({
@@ -932,7 +932,7 @@ describe('index', () => {
                 }
               });
               pipeline(
-                download({bucket:'bucket', key: 'key', version: 'version'}, {concurrency: 4, dualstack: true, endpointHostname: 's3endpoint.com'}).readStream(),
+                download({bucket:'bucket', key: 'key', version: 'version'}, {concurrency: 4, ipv6: true, endpointHostname: 's3endpoint.com'}).readStream(),
                 fs.createWriteStream('/tmp/test'),
                 (err) => {
                   if (err) {
@@ -946,11 +946,8 @@ describe('index', () => {
                 }
               );
             });
-            it('invalid dualstack', () => {
-              assert.throws(() => download({bucket:'bucket', key: 'key'}, {concurrency: 4, dualstack: 'true'}), /invalid dualstack/);
-            });
-            it('invalid family', () => {
-              assert.throws(() => download({bucket:'bucket', key: 'key'}, {concurrency: 4, family: 0}), /invalid family/);
+            it('invalid ipv6', () => {
+              assert.throws(() => download({bucket:'bucket', key: 'key'}, {concurrency: 4, ipv6: 'true'}), /invalid ipv6/);
             });
             it('region', (done) => {
               const bytes = 1000000;
